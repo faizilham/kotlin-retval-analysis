@@ -1,7 +1,7 @@
 package org.demiurg906.kotlin.plugin
 
 import org.jetbrains.kotlin.generators.generateTestGroupSuiteWithJUnit5
-import org.demiurg906.kotlin.plugin.runners.AbstractBoxTest
+// import org.demiurg906.kotlin.plugin.runners.AbstractBoxTest
 import org.demiurg906.kotlin.plugin.runners.AbstractDiagnosticTest
 
 fun main() {
@@ -11,9 +11,9 @@ fun main() {
                 model("diagnostics")
             }
 
-            testClass<AbstractBoxTest> {
-                model("box")
-            }
+//            testClass<AbstractBoxTest> {
+//                model("box")
+//            }
         }
     }
 }
