@@ -1,9 +1,38 @@
 package foo.bar
 
-import org.itmo.my.pretty.plugin.SomeAnnotation
+import org.faizilham.kotlin.retval.Discardable
 
-@SomeAnnotation
+fun normal() = 1
+
+@Discardable
+fun ignored() = 1
+
+fun other() {
+    <!UNUSED_RETURN_VALUE!>normal()<!>
+    <!UNUSED_RETURN_VALUE!>1 + 2<!>
+    ignored()
+    println("other")
+}
+
 fun test() {
-    val s = MyClass().foo()
-    s.<!UNRESOLVED_REFERENCE!>inc<!>() // should be an error
+    <!UNUSED_RETURN_VALUE!>normal()<!>
+    ignored()
+    <!UNUSED_RETURN_VALUE!>1 + 2<!>
+    println("test")
+    println(normal())
+    println(1 + 2)
+
+    other()
+
+    val x = normal()
+
+    if (true) {
+        val x = normal()
+
+        <!UNUSED_RETURN_VALUE!>normal()<!>
+        <!UNUSED_RETURN_VALUE!>1 + 2<!>
+        println(normal())
+
+        other()
+    }
 }
