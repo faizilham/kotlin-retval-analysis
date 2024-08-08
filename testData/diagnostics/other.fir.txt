@@ -1,0 +1,22 @@
+FILE: other.kt
+    package foo.bar
+
+    public final fun normal(): R|kotlin/Int| {
+        ^normal Int(1)
+    }
+    @R|org/faizilham/kotlin/retval/Discardable|() public final fun ignored(): R|kotlin/Int| {
+        ^ignored Int(1)
+    }
+    public final fun test(): R|kotlin/Unit| {
+        R|foo/bar/normal|()
+        R|foo/bar/ignored|()
+    }
+FILE: __GENERATED DECLARATIONS__.kt
+    package foo.bar
+
+    public final class MyClass : R|kotlin/Any| {
+        public final fun foo(): R|kotlin/String|
+
+        public constructor(): R|foo/bar/MyClass|
+
+    }
