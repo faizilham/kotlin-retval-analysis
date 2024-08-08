@@ -8,8 +8,15 @@ fun normal() = 1
 fun ignored() = 1
 
 fun test() {
-    // val s = MyClass().foo()
-    // s.< ! UNRESOLVED_REFERENCE ! >incas< ! >() // should be an error, delete space surrounding !
-    normal()
+    <!UNUSED_RETURN_VALUE!>normal()<!>
     ignored()
+    1 + 2
+    println("test")
+    println(normal())
+    println(1 + 2)
+
+    if (true) {
+        <!UNUSED_RETURN_VALUE!>normal()<!>
+        println(normal())
+    }
 }
