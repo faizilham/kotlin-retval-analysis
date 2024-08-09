@@ -1,21 +1,11 @@
 package com.faizilham.kotlin.retval.fir
 
-import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
+import com.faizilham.kotlin.retval.fir.checkers.SimpleUsageChecker
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
-import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.diagnostics.warning0
 import org.jetbrains.kotlin.fir.FirSession
-import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
-import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.analysis.checkers.expression.ExpressionCheckers
-import org.jetbrains.kotlin.fir.analysis.checkers.expression.FirBlockChecker
 import org.jetbrains.kotlin.fir.analysis.extensions.FirAdditionalCheckersExtension
-import org.jetbrains.kotlin.fir.expressions.FirBlock
-import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
-import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
-import org.jetbrains.kotlin.fir.types.ConeKotlinType
-import org.jetbrains.kotlin.fir.types.isUnitOrNullableUnit
-import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.psi.KtExpression
 
@@ -23,39 +13,14 @@ class UsageAnalysisExtension(session: FirSession) : FirAdditionalCheckersExtensi
     override val expressionCheckers = UsageCheckers
 
     companion object {
+        /** Discardable annotation class id */
         val DISCARDABLE_CLASS_ID = ClassId.fromString("com/faizilham/kotlin/retval/Discardable")
+
+        /** Unused return value warning factory */
+        val UNUSED_RETURN_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
     }
 
     object UsageCheckers : ExpressionCheckers() {
         override val blockCheckers = setOf(SimpleUsageChecker)
-    }
-
-    object SimpleUsageChecker : FirBlockChecker(MppCheckerKind.Common) {
-        private val UNUSED_RETURN_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
-
-        override fun check(expression: FirBlock, context: CheckerContext, reporter: DiagnosticReporter) {
-            expression.statements.forEach {
-                if (it !is FirFunctionCall || isDiscardable(it)) {
-                    return@forEach
-                }
-
-                reporter.reportOn(it.source, UNUSED_RETURN_VALUE, context)
-            }
-        }
-
-        private fun isDiscardable(expr: FirFunctionCall) : Boolean {
-            if (isDiscardableType(expr.resolvedType)) {
-                return true
-            }
-
-            val annotations = expr.calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds
-            val hasDiscardable = annotations?.any { it == DISCARDABLE_CLASS_ID } ?: false
-
-            return hasDiscardable
-        }
-
-        private fun isDiscardableType(type: ConeKotlinType) : Boolean {
-            return type.isUnitOrNullableUnit
-        }
     }
 }
