@@ -2,7 +2,9 @@ package foo.bar
 
 import org.faizilham.kotlin.retval.Discardable
 
-fun normal() = 1
+fun normal() : Int {
+    return 1
+}
 
 @Discardable
 fun ignored() = 1
@@ -23,6 +25,9 @@ fun test() {
     println(1 + 2)
 
     other()
+
+    <!UNUSED_RETURN_VALUE!>arrayOf(1, 2, 3)<!>
+    <!UNUSED_RETURN_VALUE!>listOf(1, 2, 3)<!>
 
     val x = normal()
 

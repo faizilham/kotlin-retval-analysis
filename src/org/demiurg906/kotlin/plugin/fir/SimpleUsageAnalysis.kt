@@ -13,7 +13,8 @@ import org.jetbrains.kotlin.fir.analysis.extensions.FirAdditionalCheckersExtensi
 import org.jetbrains.kotlin.fir.expressions.FirBlock
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
-import org.jetbrains.kotlin.fir.types.isUnit
+import org.jetbrains.kotlin.fir.types.ConeKotlinType
+import org.jetbrains.kotlin.fir.types.isUnitOrNullableUnit
 import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.psi.KtExpression
@@ -43,11 +44,18 @@ class SimpleUsageAnalysis(session: FirSession) : FirAdditionalCheckersExtension(
         }
 
         private fun isDiscardable(expr: FirFunctionCall) : Boolean {
-            val hasDiscardable = expr.calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds?.any {
-                it == DISCARDABLE_CLASS_ID
-            } ?: false
+            if (isDiscardableType(expr.resolvedType)) {
+                return true
+            }
 
-            return expr.resolvedType.isUnit || hasDiscardable
+            val annotations = expr.calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds
+            val hasDiscardable = annotations?.any { it == DISCARDABLE_CLASS_ID } ?: false
+
+            return hasDiscardable
+        }
+
+        private fun isDiscardableType(type: ConeKotlinType) : Boolean {
+            return type.isUnitOrNullableUnit
         }
     }
 }

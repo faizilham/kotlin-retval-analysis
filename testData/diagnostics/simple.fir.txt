@@ -21,6 +21,8 @@ FILE: simple.kt
         R|kotlin/io/println|(R|foo/bar/normal|())
         R|kotlin/io/println|(Int(1).R|kotlin/Int.plus|(Int(2)))
         R|foo/bar/other|()
+        R|kotlin/arrayOf|<R|kotlin/Int|>(vararg(Int(1), Int(2), Int(3)))
+        R|kotlin/collections/listOf|<R|kotlin/Int|>(vararg(Int(1), Int(2), Int(3)))
         lval x: R|kotlin/Int| = R|foo/bar/normal|()
         when () {
             Boolean(true) ->  {
@@ -31,14 +33,5 @@ FILE: simple.kt
                 R|foo/bar/other|()
             }
         }
-
-    }
-FILE: __GENERATED DECLARATIONS__.kt
-    package foo.bar
-
-    public final class MyClass : R|kotlin/Any| {
-        public final fun foo(): R|kotlin/String|
-
-        public constructor(): R|foo/bar/MyClass|
 
     }
