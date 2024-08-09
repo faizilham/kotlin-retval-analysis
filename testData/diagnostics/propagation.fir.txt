@@ -1,0 +1,29 @@
+FILE: propagation.kt
+    package foo.baz
+
+    public final fun normal(): R|kotlin/Int| {
+        ^normal Int(1)
+    }
+    @R|com/faizilham/kotlin/retval/Discardable|() public final fun ignored(): R|kotlin/Int| {
+        ^ignored Int(1)
+    }
+    public final fun test(): R|kotlin/Unit| {
+        R|kotlin/run|<R|kotlin/Int|>(<L> = run@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ R|foo/baz/normal|()
+        }
+        )
+        R|kotlin/run|<R|kotlin/Int|>(<L> = run@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ Int(1).R|kotlin/Int.plus|(Int(2))
+        }
+        )
+        R|kotlin/run|<R|kotlin/Unit|>(<L> = run@fun <anonymous>(): R|kotlin/Unit| <inline=Inline, kind=EXACTLY_ONCE>  {
+            R|kotlin/io/print|(R|foo/baz/normal|())
+        }
+        )
+        R|kotlin/run|<R|kotlin/Unit|>(<L> = run@fun <anonymous>(): R|kotlin/Unit| <inline=Inline, kind=EXACTLY_ONCE>  {
+            R|foo/baz/normal|()
+            R|foo/baz/ignored|()
+            R|kotlin/io/print|(R|foo/baz/normal|())
+        }
+        )
+    }
