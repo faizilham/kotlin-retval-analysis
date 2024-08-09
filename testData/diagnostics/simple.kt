@@ -1,6 +1,6 @@
 package foo.bar
 
-import org.faizilham.kotlin.retval.Discardable
+import com.faizilham.kotlin.retval.Discardable
 
 fun normal() : Int {
     return 1

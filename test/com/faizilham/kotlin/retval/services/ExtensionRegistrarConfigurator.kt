@@ -1,6 +1,6 @@
-package org.demiurg906.kotlin.plugin.services
+package com.faizilham.kotlin.retval.services
 
-import org.demiurg906.kotlin.plugin.SimplePluginRegistrar
+import com.faizilham.kotlin.retval.PluginRegistrar
 import org.jetbrains.kotlin.compiler.plugin.CompilerPluginRegistrar
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrarAdapter
@@ -13,6 +13,6 @@ class ExtensionRegistrarConfigurator(testServices: TestServices) : EnvironmentCo
         module: TestModule,
         configuration: CompilerConfiguration
     ) {
-        FirExtensionRegistrarAdapter.registerExtension(SimplePluginRegistrar())
+        FirExtensionRegistrarAdapter.registerExtension(PluginRegistrar())
     }
 }

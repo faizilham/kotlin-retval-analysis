@@ -4,7 +4,7 @@ FILE: simple.kt
     public final fun normal(): R|kotlin/Int| {
         ^normal Int(1)
     }
-    @R|org/faizilham/kotlin/retval/Discardable|() public final fun ignored(): R|kotlin/Int| {
+    @R|com/faizilham/kotlin/retval/Discardable|() public final fun ignored(): R|kotlin/Int| {
         ^ignored Int(1)
     }
     public final fun other(): R|kotlin/Unit| {

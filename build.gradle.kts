@@ -4,7 +4,7 @@ plugins {
     java
     kotlin("jvm") version "2.0.0"
 }
-group = "org.demiurg906.kotlin.plugin"
+group = "com.faizilham.kotlin.retval"
 version = "0.1"
 
 val kotlinVersion: String by project.properties
@@ -69,7 +69,7 @@ tasks.withType<KotlinCompile>().configureEach {
 
 val generateTests by tasks.creating(JavaExec::class) {
     classpath = sourceSets.test.get().runtimeClasspath
-    mainClass.set("org.demiurg906.kotlin.plugin.GenerateTestsKt")
+    mainClass.set("com.faizilham.kotlin.retval.GenerateTestsKt")
 }
 
 val compileTestKotlin by tasks.getting {

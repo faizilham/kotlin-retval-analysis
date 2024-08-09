@@ -1,8 +1,8 @@
-package org.demiurg906.kotlin.plugin
+package com.faizilham.kotlin.retval
 
-import org.jetbrains.kotlin.generators.generateTestGroupSuiteWithJUnit5
 // import org.demiurg906.kotlin.plugin.runners.AbstractBoxTest
-import org.demiurg906.kotlin.plugin.runners.AbstractDiagnosticTest
+import com.faizilham.kotlin.retval.runners.AbstractDiagnosticTest
+import org.jetbrains.kotlin.generators.generateTestGroupSuiteWithJUnit5
 
 fun main() {
     generateTestGroupSuiteWithJUnit5 {
@@ -10,10 +10,6 @@ fun main() {
             testClass<AbstractDiagnosticTest> {
                 model("diagnostics")
             }
-
-//            testClass<AbstractBoxTest> {
-//                model("box")
-//            }
         }
     }
 }

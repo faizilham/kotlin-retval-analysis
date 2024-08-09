@@ -1,4 +1,4 @@
-package org.demiurg906.kotlin.plugin.fir
+package com.faizilham.kotlin.retval.fir
 
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
@@ -19,11 +19,11 @@ import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.psi.KtExpression
 
-class SimpleUsageAnalysis(session: FirSession) : FirAdditionalCheckersExtension(session) {
+class UsageAnalysisExtension(session: FirSession) : FirAdditionalCheckersExtension(session) {
     override val expressionCheckers = UsageCheckers
 
     companion object {
-        val DISCARDABLE_CLASS_ID = ClassId.fromString("org/faizilham/kotlin/retval/Discardable")
+        val DISCARDABLE_CLASS_ID = ClassId.fromString("com/faizilham/kotlin/retval/Discardable")
     }
 
     object UsageCheckers : ExpressionCheckers() {
