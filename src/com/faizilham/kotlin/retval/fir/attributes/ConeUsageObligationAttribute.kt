@@ -4,6 +4,12 @@ import org.jetbrains.kotlin.fir.types.ConeAttribute
 import org.jetbrains.kotlin.fir.types.ConeAttributes
 import kotlin.reflect.KClass
 
+/*
+ * ConeAttribute for Usage Obligation, based on:
+ *      https://github.com/JetBrains/kotlin/blob/master/plugins/fir-plugin-prototype/src/org/jetbrains/kotlin/fir/plugin/types/ConeNumberSignAttribute.kt
+ *
+ */
+
 class ConeUsageObligationAttribute private constructor(val usage: UsageObligation)
     : ConeAttribute<ConeUsageObligationAttribute>() {
 
@@ -15,32 +21,39 @@ class ConeUsageObligationAttribute private constructor(val usage: UsageObligatio
             return when (usage) {
                 UsageObligation.MayUse -> MayUse
                 UsageObligation.AnyUse -> AnyUse
-                null -> null // implicitly MustUse
+                null -> null
             }
         }
     }
 
-    fun isMayUse() : Boolean {
-        return usage == UsageObligation.MayUse
-    }
-
+    /*
+     * Usage Obligations, from lowest to highest:
+     *   AnyUse: "generic" / variable obligation,
+     *   MayUse: discardable values,
+     *   null  : implicitly MustUse.
+     */
     enum class UsageObligation {
-        MayUse {
-            override fun combine(other: UsageObligation?): UsageObligation? = when(other) {
-                MayUse -> MayUse
-                AnyUse -> MayUse
-                null   -> null // implicitly MustUse
-            }
-        },
         AnyUse {
             override fun combine(other: UsageObligation?): UsageObligation? = when(other) {
                 MayUse -> MayUse
                 AnyUse -> AnyUse
-                null   -> null // implicitly MustUse
+                null   -> null
+            }
+        },
+
+        MayUse {
+            override fun combine(other: UsageObligation?): UsageObligation? = when(other) {
+                MayUse -> MayUse
+                AnyUse -> MayUse
+                null   -> null
             }
         };
 
         abstract fun combine(other: UsageObligation?): UsageObligation?
+    }
+
+    fun isMayUse() : Boolean {
+        return usage == UsageObligation.MayUse
     }
 
     private fun combine(other: ConeUsageObligationAttribute?): ConeUsageObligationAttribute? {

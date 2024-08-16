@@ -10,8 +10,10 @@ import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.fir.types.builder.buildResolvedTypeRef
 import org.jetbrains.kotlin.fir.types.impl.ConeClassLikeTypeImpl
 
-// based on:
-//   https://github.com/JetBrains/kotlin/blob/master/plugins/fir-plugin-prototype/src/org/jetbrains/kotlin/fir/plugin/types/FirNumberSignAttributeExtension.kt
+/*
+ * TypeAttributeExtension for UsageObligation, based on:
+ *    https://github.com/JetBrains/kotlin/blob/master/plugins/fir-plugin-prototype/src/org/jetbrains/kotlin/fir/plugin/types/FirNumberSignAttributeExtension.kt
+*/
 
 class UsageObligationAttributeExtension(session: FirSession) : FirTypeAttributeExtension(session) {
     override fun convertAttributeToAnnotation(attribute: ConeAttribute<*>): FirAnnotation? {

@@ -16,15 +16,14 @@ import org.jetbrains.kotlin.fir.types.isUnitOrNullableUnit
 import org.jetbrains.kotlin.fir.types.resolvedType
 import org.jetbrains.kotlin.name.ClassId
 
-
+// SimpleUsageChecker is an unused return value checker
+//   warns any function call with unused value in a block, given it is not discardable
 object SimpleUsageChecker : FirBlockChecker(MppCheckerKind.Common) {
-
 
     override fun check(expression: FirBlock, context: CheckerContext, reporter: DiagnosticReporter) {
         expression.statements.forEach() {
             if (it is FirFunctionCall && !isDiscardable(it)) {
                 reporter.reportOn(it.source, Utils.Warnings.UNUSED_RETURN_VALUE, context)
-//                it.resolvedType.attributes.add(
             }
         }
     }
@@ -50,6 +49,7 @@ object SimpleUsageChecker : FirBlockChecker(MppCheckerKind.Common) {
         return classId != null && builtInDiscardable.contains(classId)
     }
 
+    // Hard-coded class to be discardable, work around until it can be annotated
     private val builtInDiscardable : Set<ClassId> = setOf(
         ClassId.fromString("kotlin/contracts/CallsInPlace")
     )

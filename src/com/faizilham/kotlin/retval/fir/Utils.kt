@@ -9,8 +9,7 @@ import org.jetbrains.kotlin.psi.KtExpression
 
 object Utils {
     object Constants {
-        /** Annotation class ids */
-
+        /* Annotation class ids */
         private val PACKAGE_FQN = FqName("com.faizilham.kotlin.retval")
         val DiscardableClassId = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
         val MayUseClassId = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
