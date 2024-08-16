@@ -1,6 +1,6 @@
 package com.faizilham.kotlin.retval.fir
 
-import com.faizilham.kotlin.retval.fir.types.ConeUsageObligationAttribute
+import com.faizilham.kotlin.retval.fir.attributes.ConeUsageObligationAttribute
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.expressions.builder.buildAnnotation

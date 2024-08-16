@@ -1,4 +1,4 @@
-package com.faizilham.kotlin.retval.fir.types
+package com.faizilham.kotlin.retval.fir.attributes
 
 import org.jetbrains.kotlin.fir.types.ConeAttribute
 import org.jetbrains.kotlin.fir.types.ConeAttributes
