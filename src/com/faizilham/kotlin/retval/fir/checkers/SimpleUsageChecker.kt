@@ -11,11 +11,15 @@ import org.jetbrains.kotlin.fir.expressions.FirBlock
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
+import org.jetbrains.kotlin.fir.types.classId
 import org.jetbrains.kotlin.fir.types.isUnitOrNullableUnit
 import org.jetbrains.kotlin.fir.types.resolvedType
+import org.jetbrains.kotlin.name.ClassId
 
 
 object SimpleUsageChecker : FirBlockChecker(MppCheckerKind.Common) {
+
+
     override fun check(expression: FirBlock, context: CheckerContext, reporter: DiagnosticReporter) {
         expression.statements.forEach() {
             if (it is FirFunctionCall && !isDiscardable(it)) {
@@ -38,7 +42,15 @@ object SimpleUsageChecker : FirBlockChecker(MppCheckerKind.Common) {
 
     private fun isDiscardableType(type: ConeKotlinType) : Boolean {
         return type.isUnitOrNullableUnit ||
+               isBuiltInDiscardable(type.classId) ||
                (type.attributes.usageObligation?.isMayUse() ?: false)
-//              || type.hasAnnotation(FqName("kotlin.internal.ContractsDsl"))
     }
+
+    private fun isBuiltInDiscardable(classId: ClassId?) : Boolean {
+        return classId != null && builtInDiscardable.contains(classId)
+    }
+
+    private val builtInDiscardable : Set<ClassId> = setOf(
+        ClassId.fromString("kotlin/contracts/CallsInPlace")
+    )
 }

@@ -19,17 +19,24 @@ fun fromIgnored1() : Int = ignored2()
 
 fun fromIgnored2() : @AnyUse Int = ignored2()
 
-//@OptIn(ExperimentalContracts::class)
-//inline fun <@AnyUse R> myRun(block: () -> R): R {
-//    contract {
-//        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
-//        // problem : < ! UNUSED_RETURN_VALUE ! >callsInPlace(block, InvocationKind.EXACTLY_ONCE)
-//    }
-//    return block()
-//}
+@OptIn(ExperimentalContracts::class)
+inline fun <@AnyUse R> myRun(block: () -> R): R {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
+    return block()
+}
 
-inline fun <@AnyUse R> myRun(block: () -> R): R = block()
-inline fun <R> myRun1(block: () -> @AnyUse R): @AnyUse R = block()
+@OptIn(ExperimentalContracts::class)
+inline fun <R> myRun1(block: () -> @AnyUse R): @AnyUse R {
+    contract {
+        callsInPlace(block, InvocationKind.EXACTLY_ONCE)
+    }
+    return block()
+}
+
+//inline fun <@AnyUse R> myRun(block: () -> R): R = block()
+//inline fun <R> myRun1(block: () -> @AnyUse R): @AnyUse R = block()
 //fun <@AnyUse R> myRun2(block: () -> R): R = block()
 
 
