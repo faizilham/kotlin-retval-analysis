@@ -55,6 +55,9 @@ fun test() {
     <!UNUSED_RETURN_VALUE!>myRun { normal() }<!>
     myRun { ignored2() }
 
+    // not sure if the following is desirable
+    <!UNUSED_RETURN_VALUE!>myRun { ignored2() + ignored2() }<!>
+
     <!UNUSED_RETURN_VALUE!>myRun { myRun { normal() } }<!>
 //    myRun { myRun { ignored2() } } // FIX
 
