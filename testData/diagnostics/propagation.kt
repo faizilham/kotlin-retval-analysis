@@ -55,9 +55,6 @@ fun test() {
     <!UNUSED_RETURN_VALUE!>myRun { normal() }<!>
     myRun { ignored2() }
 
-    // not sure if the following is desirable
-    <!UNUSED_RETURN_VALUE!>myRun { ignored2() + ignored2() }<!>
-
     <!UNUSED_RETURN_VALUE!>myRun { myRun { normal() } }<!>
 //    myRun { myRun { ignored2() } } // FIX
 
@@ -70,4 +67,37 @@ fun test() {
 
 //    run { ignored() }                // FIX
 //    run { run { ignored() } }        // FIX
+
+
+    // with other control flows
+
+    val c = true;
+    myRun {
+        if (c) {
+            ignored2()
+        } else {
+            ignored2()
+        }
+    }
+
+
+    <!UNUSED_RETURN_VALUE!>myRun {
+        if (c) {
+            <!UNUSED_RETURN_VALUE!>normal()<!> // FIX?, since it's a returned expression
+        } else {
+            ignored2()
+        }
+    }<!>
+
+    val x = myRun { normal() }
+
+    // semantically unclear cases
+    // not sure if the followings are desirable
+
+    // 1. operations make ignored arguments into MustUse
+    <!UNUSED_RETURN_VALUE!>myRun { ignored2() + ignored2() }<!>
+
+    // 2. MayUse variable
+    val y : @MayUse Int = 3
+    myRun { y }
 }

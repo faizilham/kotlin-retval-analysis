@@ -75,10 +75,6 @@ FILE: propagation.kt
         }
         )
         R|foo/baz/myRun|<R|kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
-            ^ R|foo/baz/ignored2|().R|kotlin/Int.plus|(R|foo/baz/ignored2|())
-        }
-        )
-        R|foo/baz/myRun|<R|kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
             ^ R|foo/baz/myRun|<R|kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
                 ^ R|foo/baz/normal|()
             }
@@ -94,4 +90,42 @@ FILE: propagation.kt
         }
         )
         R|foo/baz/fromIgnored1|()
+        lval c: R|kotlin/Boolean| = Boolean(true)
+        R|foo/baz/myRun|<R|@MayUse kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|@MayUse kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ when () {
+                R|<local>/c| ->  {
+                    R|foo/baz/ignored2|()
+                }
+                else ->  {
+                    R|foo/baz/ignored2|()
+                }
+            }
+
+        }
+        )
+        R|foo/baz/myRun|<R|kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ when () {
+                R|<local>/c| ->  {
+                    R|foo/baz/normal|()
+                }
+                else ->  {
+                    R|foo/baz/ignored2|()
+                }
+            }
+
+        }
+        )
+        lval x: R|kotlin/Int| = R|foo/baz/myRun|<R|kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ R|foo/baz/normal|()
+        }
+        )
+        R|foo/baz/myRun|<R|kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ R|foo/baz/ignored2|().R|kotlin/Int.plus|(R|foo/baz/ignored2|())
+        }
+        )
+        lval y: R|@MayUse kotlin/Int| = Int(3)
+        R|foo/baz/myRun|<R|@MayUse kotlin/Int|>(<L> = myRun@fun <anonymous>(): R|@MayUse kotlin/Int| <inline=Inline, kind=EXACTLY_ONCE>  {
+            ^ R|<local>/y|
+        }
+        )
     }

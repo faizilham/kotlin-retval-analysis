@@ -15,29 +15,28 @@ class ConeUsageObligationAttribute private constructor(val usage: UsageObligatio
             return when (usage) {
                 UsageObligation.MayUse -> MayUse
                 UsageObligation.AnyUse -> AnyUse
-                null -> null
+                null -> null // implicitly MustUse
             }
         }
     }
 
     fun isMayUse() : Boolean {
-        return (usage == UsageObligation.MayUse) ?: false
+        return usage == UsageObligation.MayUse
     }
 
     enum class UsageObligation {
-
         MayUse {
             override fun combine(other: UsageObligation?): UsageObligation? = when(other) {
                 MayUse -> MayUse
                 AnyUse -> MayUse
-                null   -> null
+                null   -> null // implicitly MustUse
             }
         },
         AnyUse {
             override fun combine(other: UsageObligation?): UsageObligation? = when(other) {
                 MayUse -> MayUse
                 AnyUse -> AnyUse
-                null   -> null
+                null   -> null // implicitly MustUse
             }
         };
 
