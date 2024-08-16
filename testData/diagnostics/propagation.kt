@@ -91,6 +91,14 @@ fun test() {
         }
     }<!>
 
+    val a1 = myRun {
+        if (c) {
+            <!UNUSED_RETURN_VALUE!>normal()<!> // FIX?, since it's a returned expression
+        } else {
+            ignored2()
+        }
+    }
+
     val x = myRun { normal() }
 
     // semantically unclear cases
