@@ -6,14 +6,39 @@ fun normal() : Int {
     return 1
 }
 
+fun normal1(i : Int) = i + 1
+
 @Discardable
 fun ignored() = 1
+
+@Discardable
+fun ignored1(i : Int) = i + 1
 
 fun other() {
     <!UNUSED_RETURN_VALUE!>normal()<!>
     <!UNUSED_RETURN_VALUE!>1 + 2<!>
     ignored()
     println("other")
+}
+
+fun testflow() {
+    var x = normal()
+    x = ignored()
+
+    <!UNUSED_RETURN_VALUE!>normal()<!>
+    <!UNUSED_RETURN_VALUE!>normal1(ignored1(1))<!>
+    ignored()
+    ignored1(normal1(1))
+
+    <!UNUSED_RETURN_VALUE!>1 + 2<!>
+    print(1 + 2)
+    2
+
+    if (1 + 1 == 2) {
+        <!UNUSED_RETURN_VALUE!>normal()<!>
+    } else {
+        ignored()
+    }
 }
 
 fun test() {
