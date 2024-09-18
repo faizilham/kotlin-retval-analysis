@@ -41,18 +41,31 @@ inline fun <R> myRun1(block: () -> @AnyUse R): @AnyUse R {
 //inline fun <R> myRun1(block: () -> @AnyUse R): @AnyUse R = block()
 //fun <@AnyUse R> myRun2(block: () -> R): R = block()
 
+fun testflow() {
+
+}
 
 fun test() {
     <!UNUSED_RETURN_VALUE!>run { normal() }<!>
     <!UNUSED_RETURN_VALUE!>run { 1 + 2 }<!>
     run { print(normal()) }
+    // multiple levels
     run {
         <!UNUSED_RETURN_VALUE!>normal()<!>
         ignored()
         print(normal())
+        run {
+            <!UNUSED_RETURN_VALUE!>normal()<!>
+            ignored()
+            print(normal())
+        }
     }
 
     ignored2()
+
+    val lambdaIgnored = { ignored() }
+
+    lambdaIgnored()
 
     <!UNUSED_RETURN_VALUE!>myRun { normal() }<!>
     myRun { ignored2() }
@@ -61,6 +74,7 @@ fun test() {
 //    myRun { myRun { ignored2() } } // FIX
 
     <!UNUSED_RETURN_VALUE!>myRun1 { normal() }<!>
+    myRun1 { ignored() }
     myRun1 { ignored2() }
 
 //    myRun1 { myRun1 { ignored2() } } // FIX

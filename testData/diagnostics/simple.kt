@@ -8,17 +8,30 @@ fun normal() : Int {
 
 fun normal1(i : Int) = i + 1
 
+fun normal2(i : Int) : Int {
+    val inc = { i + 1 }
+
+    if (i == 2) return inc()
+    else return inc() + 1
+}
+
+
 @Discardable
 fun ignored() = 1
 
 @Discardable
-fun ignored1(i : Int) = i + 1
+fun ignored1(i : Int) = if (i == 2) i + 1 else i + 2
 
 fun other() {
     <!UNUSED_RETURN_VALUE!>normal()<!>
     <!UNUSED_RETURN_VALUE!>1 + 2<!>
     ignored()
-    println("other")
+
+    val x = if (normal() == 1) 1 + 1 else 2 + 2
+
+    println(x.inc().toString())
+
+    <!UNUSED_RETURN_VALUE!>normal()<!>
 }
 
 fun testflow() {
