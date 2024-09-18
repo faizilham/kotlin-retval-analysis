@@ -45,29 +45,32 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
         // context changing visits
         override fun visitFunctionCallArgumentsEnterNode(node: FunctionCallArgumentsEnterNode, data: ValueUsageData) {
-            val currentContext = data.getPathContext(node)
-            val newContext = PathContext(currentContext.argumentScopeLevel + 1)
-
-            propagateContext(node, data, newContext)
+            updateArgumentScopeLevel(node, data, 1)
         }
 
         override fun visitFunctionCallArgumentsExitNode(node: FunctionCallArgumentsExitNode, data: ValueUsageData) {
-            val currentContext = data.getPathContext(node)
-            val newContext = PathContext(currentContext.argumentScopeLevel - 1)
-
-            propagateContext(node, data, newContext)
+            updateArgumentScopeLevel(node, data, -1)
         }
 
         override fun visitWhenBranchConditionEnterNode(node: WhenBranchConditionEnterNode, data: ValueUsageData) {
-            val currentContext = data.getPathContext(node)
-            val newContext = PathContext(currentContext.argumentScopeLevel + 1)
-
-            propagateContext(node, data, newContext)
+            updateArgumentScopeLevel(node, data, 1)
         }
 
         override fun visitWhenBranchConditionExitNode(node: WhenBranchConditionExitNode, data: ValueUsageData) {
+            updateArgumentScopeLevel(node, data, -1)
+        }
+
+        override fun visitLoopConditionEnterNode(node: LoopConditionEnterNode, data: ValueUsageData) {
+            updateArgumentScopeLevel(node, data, 1)
+        }
+
+        override fun visitLoopConditionExitNode(node: LoopConditionExitNode, data: ValueUsageData) {
+            updateArgumentScopeLevel(node, data, -1)
+        }
+
+        private fun updateArgumentScopeLevel(node: CFGNode<*>, data: ValueUsageData, change: Int) {
             val currentContext = data.getPathContext(node)
-            val newContext = PathContext(currentContext.argumentScopeLevel - 1)
+            val newContext = PathContext(currentContext.argumentScopeLevel + change)
 
             propagateContext(node, data, newContext)
         }
@@ -76,7 +79,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             val pathContext = newContext ?: data.getPathContext(node)
 
             for (next in node.followingNodes) {
-                if (next.isDead) continue
+                if (next.isInvalidNext(node)) continue
                 data.addPathContext(next, pathContext)
             }
 
@@ -141,7 +144,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
         private fun propagateUnused(node: CFGNode<*>, data: ValueUsageData) {
             val unusedSources = node.previousNodes.mapNotNull {
-                if (it.isDead) null
+                if (it.isInvalidPrev(node)) null
                 else data.unusedValues.remove(it)
             }
 
@@ -191,6 +194,9 @@ private sealed interface UnusedSource {
     class Self(val node: CFGNode<*>) : UnusedSource {}
     class Indirect(val sources: List<UnusedSource>) : UnusedSource {}
 }
+
+private fun CFGNode<*>.isInvalidNext(current: CFGNode<*>) = isDead || edgeFrom(current).kind.isBack
+private fun CFGNode<*>.isInvalidPrev(current: CFGNode<*>) = isDead || edgeTo(current).kind.isBack
 
 private fun JumpNode.isReturn() =
     (followingNodes[0].isDead && followingNodes[1] is FunctionExitNode) ||

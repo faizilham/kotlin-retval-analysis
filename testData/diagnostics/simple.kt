@@ -15,7 +15,6 @@ fun normal2(i : Int) : Int {
     else return inc() + 1
 }
 
-
 @Discardable
 fun ignored() = 1
 
@@ -32,6 +31,20 @@ fun other() {
     println(x.inc().toString())
 
     <!UNUSED_RETURN_VALUE!>normal()<!>
+}
+
+fun looping() : Int {
+    var i = 0
+    while (i < 5) {
+        if (i == 3) {
+            return normal()
+        }
+
+        <!UNUSED_RETURN_VALUE!>normal()<!>
+        i = i + 1
+    }
+
+    return normal() + 1
 }
 
 fun testflow() {
