@@ -2,6 +2,8 @@ package foo.bar
 
 import com.faizilham.kotlin.retval.Discardable
 
+data class Pair(val x:Int, val y: Int)
+
 fun normal() : Int {
     return 1
 }
@@ -30,7 +32,42 @@ fun other() {
 
     println(x.inc().toString())
 
+    println(if (normal() == 1) 1 else 2)
+
+    val y = { x + 1 }()
+
+    (<!UNUSED_RETURN_VALUE!>{ x + 1 }()<!>)
+
     <!UNUSED_RETURN_VALUE!>normal()<!>
+}
+
+fun normalOrNull(x: Int) = if (x > 0) 1 else null
+
+@Discardable
+fun ignoredOrNull(x: Int) = normalOrNull(x)
+
+fun normalBool(x: Int) = x == 1
+
+@Discardable
+fun ignoredBool(x: Int) = x == 2
+
+fun binaries() {
+    val l = listOf(1, 2, 3)
+    val c = normalOrNull(4) ?: ignoredOrNull(1) ?: 1
+
+    <!UNUSED_RETURN_VALUE!>normalOrNull(4)<!> ?: ignoredOrNull(1) ?: 1
+    ignoredOrNull(4) ?: ignoredOrNull(1) ?: 1
+
+    var b = (1 == normal()) == (ignored() == 1)
+    <!UNUSED_RETURN_VALUE!>3 == 2<!>
+    <!UNUSED_RETURN_VALUE!>(1 == normal()) == (ignored() == 1)<!>
+
+    b = normalBool(2) && ignoredBool(2) || true
+    <!UNUSED_RETURN_VALUE!>normalBool(2)<!> && ignoredBool(2) || true
+    <!UNUSED_RETURN_VALUE!>normalBool(2)<!> && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || true
+    ignoredBool(2) && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || true
+    ignoredBool(2) && ignoredBool(2) || true
+
 }
 
 fun looping() : Int {

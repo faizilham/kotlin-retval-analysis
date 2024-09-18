@@ -4,9 +4,11 @@ import com.faizilham.kotlin.retval.fir.Utils
 import com.faizilham.kotlin.retval.fir.isDiscardable
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
+import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
 import org.jetbrains.kotlin.fir.analysis.checkers.cfa.FirControlFlowChecker
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
+import org.jetbrains.kotlin.fir.expressions.arguments
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 
 object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
@@ -21,12 +23,12 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             return
         }
 
-//        println("analyze ${graph.name} ${graph.kind}")
+        println("analyze ${graph.name} ${graph.kind}")
 
         val valueUsageData = ValueUsageData()
         graph.traverse(UsageCheckerVisitor(), valueUsageData)
 
-        for (source in valueUsageData.unusedValues.values) {
+        for (source in valueUsageData.getUnusedValues()) {
             reportUnused(source, reporter, context)
         }
     }
@@ -92,8 +94,10 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             val pathContext = propagateContext(node, data)
             val used = pathContext.argumentScopeLevel > 0 || node.fir.isDiscardable()
 
+//            println(node.fir.calleeReference.name)
+
             if (!used) {
-                data.unusedValues[node] = UnusedSource.Self(node)
+                data.addUnused(node, UnusedSource.Self(node))
             }
         }
 
@@ -135,40 +139,89 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             propagateUnused(node, data)
         }
 
+        // binary operators
+        override fun visitEqualityOperatorCallNode(node: EqualityOperatorCallNode, data: ValueUsageData) {
+            val pathContext = propagateContext(node, data)
+
+            if (pathContext.argumentScopeLevel > 0) return
+
+
+            for (argument in node.fir.arguments) {
+                data.removeUnused(argument)
+            }
+
+            data.addUnused(node, UnusedSource.Self(node))
+        }
+
+        override fun visitElvisLhsExitNode(node: ElvisLhsExitNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
+        override fun visitElvisLhsIsNotNullNode(node: ElvisLhsIsNotNullNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
+        override fun visitElvisExitNode(node: ElvisExitNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
+        override fun visitBinaryAndExitLeftOperandNode(node: BinaryAndExitLeftOperandNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
+        override fun visitBinaryAndExitNode(node: BinaryAndExitNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
+        override fun visitBinaryOrExitLeftOperandNode(node: BinaryOrExitLeftOperandNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
+        override fun visitBinaryOrExitNode(node: BinaryOrExitNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateUnused(node, data)
+        }
+
         private fun markFirstPreviousAsUsed(node: CFGNode<*>, data: ValueUsageData) {
             val valueNode = node.firstPreviousNode
-            if (valueNode in data.unusedValues) {
-                data.unusedValues.remove(valueNode)
-            }
+            data.removeUnused(valueNode)
         }
 
         private fun propagateUnused(node: CFGNode<*>, data: ValueUsageData) {
             val unusedSources = node.previousNodes.mapNotNull {
                 if (it.isInvalidPrev(node)) null
-                else data.unusedValues.remove(it)
+                else data.removeUnused(it)
             }
 
             if (unusedSources.isNotEmpty()) {
-                data.unusedValues[node] = flattenSingleIndirect(unusedSources)
+                data.addUnused(node, flattenSingleIndirect(node, unusedSources))
             }
         }
 
-        private fun flattenSingleIndirect(sources: List<UnusedSource>): UnusedSource.Indirect {
+        private fun flattenSingleIndirect(node: CFGNode<*>, sources: List<UnusedSource>): UnusedSource.Indirect {
             if (sources.size == 1) {
                 val source = sources[0]
                 if (source is UnusedSource.Indirect) {
-                    return UnusedSource.Indirect(source.sources)
+                    return UnusedSource.Indirect(node, source.sources)
                 }
             }
 
-            return UnusedSource.Indirect(sources)
+            return UnusedSource.Indirect(node, sources)
         }
     }
 }
 
 private class ValueUsageData {
-    val pathContexts : MutableMap<CFGNode<*>, PathContext> = mutableMapOf()
-    val unusedValues : MutableMap<CFGNode<*>, UnusedSource> = mutableMapOf()
+    private val pathContexts : MutableMap<CFGNode<*>, PathContext> = mutableMapOf()
+    private val unusedValues : MutableMap<FirElement, UnusedSource> = mutableMapOf()
+
+    // using FirElement as key for EqualityOperatorCallNode case work-around
 
     fun getPathContext(node: CFGNode<*>) : PathContext {
         var context = pathContexts[node]
@@ -184,6 +237,16 @@ private class ValueUsageData {
     fun addPathContext(node: CFGNode<*>, context: PathContext) {
         pathContexts[node] = context
     }
+
+    fun addUnused(node: CFGNode<*>, source: UnusedSource) {
+        unusedValues[node.fir] = source
+    }
+
+    fun removeUnused(node: CFGNode<*>) = unusedValues.remove(node.fir)
+
+    fun removeUnused(fir: FirElement) = unusedValues.remove(fir)
+
+    fun getUnusedValues() = unusedValues.values
 }
 
 private data class PathContext(
@@ -192,7 +255,7 @@ private data class PathContext(
 
 private sealed interface UnusedSource {
     class Self(val node: CFGNode<*>) : UnusedSource {}
-    class Indirect(val sources: List<UnusedSource>) : UnusedSource {}
+    class Indirect(val node: CFGNode<*>, val sources: List<UnusedSource>) : UnusedSource {}
 }
 
 private fun CFGNode<*>.isInvalidNext(current: CFGNode<*>) = isDead || edgeFrom(current).kind.isBack
