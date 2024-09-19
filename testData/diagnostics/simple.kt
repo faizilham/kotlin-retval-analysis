@@ -28,11 +28,6 @@ fun other() {
     <!UNUSED_RETURN_VALUE!>1 + 2<!>
     ignored()
 
-    // todo? but most likely undecidable in general cases
-    val indirect = ::ignored
-
-    <!UNUSED_RETURN_VALUE!>indirect()<!> // because it is resolved to kotlin/reflect/KFunction0.invoke instead of ignored()
-
     val x = if (normal() == 1) 1 + 1 else 2 + 2
 
     println(x.inc().toString())
@@ -73,6 +68,40 @@ fun binaries() {
     ignoredBool(2) && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || true
     ignoredBool(2) && ignoredBool(2) || true
 
+}
+
+fun indirectRefs() {
+    // only the simplest cases (direct assignment), var is not yet supported
+    val indirect = ::ignored
+    val localNormal = ::normal
+
+    indirect()
+    <!UNUSED_RETURN_VALUE!>localNormal()<!>
+
+    val indirect2 = indirect
+    val indirect3 = localNormal
+
+    indirect2()
+    <!UNUSED_RETURN_VALUE!>indirect3()<!>
+
+    val dlambda = { ignored() }
+    val nlambda = { normal() }
+
+    dlambda()
+    <!UNUSED_RETURN_VALUE!>nlambda()<!>
+
+    val doubleLamb = { x: Int ->
+        val indirect = { x: Int ->
+            if (x == 2) dlambda() else indirect2()
+        }
+
+        indirect(x)
+    }
+
+    doubleLamb(1)
+
+    val litLambda = { 1 }
+    litLambda()             // TODO: should warn, literals not yet handled
 }
 
 fun looping() : Int {
@@ -123,9 +152,11 @@ fun test() {
     <!UNUSED_RETURN_VALUE!>listOf(1, 2, 3)<!>
 
     val x = normal()
+    println(x)
 
     if (true) {
         val x = normal()
+        println(x)
 
         <!UNUSED_RETURN_VALUE!>normal()<!>
         <!UNUSED_RETURN_VALUE!>1 + 2<!>

@@ -57,14 +57,7 @@ fun hasDiscardableAnnotation(fir: FirQualifiedAccessExpression) : Boolean {
     return hasDiscardable
 }
 
-fun FirCallableReferenceAccess.hasDiscardableAnnotation() : Boolean {
-    val annotations = calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds
-    val hasDiscardable = annotations?.any { it == Utils.Constants.DiscardableClassId } ?: false
-
-    return hasDiscardable
-}
-
-fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke()
+fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke() ?: false
 
 fun ConeKotlinType.isDiscardable() : Boolean {
     return isUnitOrNullableUnit ||
