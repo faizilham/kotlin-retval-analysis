@@ -28,6 +28,11 @@ fun other() {
     <!UNUSED_RETURN_VALUE!>1 + 2<!>
     ignored()
 
+    // todo? but most likely undecidable in general cases
+    val indirect = ::ignored
+
+    <!UNUSED_RETURN_VALUE!>indirect()<!> // because it is resolved to kotlin/reflect/KFunction0.invoke instead of ignored()
+
     val x = if (normal() == 1) 1 + 1 else 2 + 2
 
     println(x.inc().toString())

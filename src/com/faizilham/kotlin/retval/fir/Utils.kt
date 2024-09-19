@@ -3,12 +3,12 @@ package com.faizilham.kotlin.retval.fir
 import com.faizilham.kotlin.retval.fir.attributes.usageObligation
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
 import org.jetbrains.kotlin.diagnostics.warning0
+import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
+import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
-import org.jetbrains.kotlin.fir.types.ConeKotlinType
-import org.jetbrains.kotlin.fir.types.classId
-import org.jetbrains.kotlin.fir.types.isUnitOrNullableUnit
-import org.jetbrains.kotlin.fir.types.resolvedType
+import org.jetbrains.kotlin.fir.resolve.isInvoke
+import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -38,11 +38,33 @@ fun FirFunctionCall.isDiscardable() : Boolean {
         return true
     }
 
+    return hasDiscardableAnnotation(this)
+}
+
+fun FirCallableReferenceAccess.isDiscardable() : Boolean {
+    val returnType = resolvedType.typeArguments.firstOrNull()?.type
+    if (returnType?.isDiscardable() == true) {
+        return true
+    }
+
+    return hasDiscardableAnnotation(this)
+}
+
+fun hasDiscardableAnnotation(fir: FirQualifiedAccessExpression) : Boolean {
+    val annotations = fir.calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds
+    val hasDiscardable = annotations?.any { it == Utils.Constants.DiscardableClassId } ?: false
+
+    return hasDiscardable
+}
+
+fun FirCallableReferenceAccess.hasDiscardableAnnotation() : Boolean {
     val annotations = calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds
     val hasDiscardable = annotations?.any { it == Utils.Constants.DiscardableClassId } ?: false
 
     return hasDiscardable
 }
+
+fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke()
 
 fun ConeKotlinType.isDiscardable() : Boolean {
     return isUnitOrNullableUnit ||

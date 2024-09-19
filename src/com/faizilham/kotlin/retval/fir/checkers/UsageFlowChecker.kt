@@ -94,7 +94,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             val pathContext = propagateContext(node, data)
             val used = pathContext.argumentScopeLevel > 0 || node.fir.isDiscardable()
 
-//            println(node.fir.calleeReference.name)
+//            println("fcall ref ${node.fir.calleeReference.name} ${node.fir.origin} ${node.fir.isInvoke()}")
 
             if (!used) {
                 data.addUnused(node, UnusedSource.Self(node))
@@ -109,24 +109,58 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         override fun visitVariableAssignmentNode(node: VariableAssignmentNode, data: ValueUsageData) {
             propagateContext(node, data)
             markFirstPreviousAsUsed(node, data)
+
+            when (val prev = node.firstPreviousNode) {
+                is AnonymousFunctionExpressionNode -> {
+                    prev.fir.anonymousFunction
+                }
+                is CallableReferenceNode -> {
+                    prev.fir.isDiscardable()
+                }
+                else -> {}
+            }
         }
 
         override fun visitJumpNode(node: JumpNode, data: ValueUsageData) {
             propagateContext(node, data)
-
-            if (node.isReturn()) {
-                markFirstPreviousAsUsed(node, data)
-            }
+            propagateUnused(node, data)
         }
+
+//        override fun visitAnonymousFunctionExpressionNode(node: AnonymousFunctionExpressionNode, data: ValueUsageData) {
+//            visitNode(node, data)
+//
+//            println("AnonFunc ${node.fir.anonymousFunction}")
+//        }
 
         override fun visitBlockExitNode(node: BlockExitNode, data: ValueUsageData) {
             propagateContext(node, data)
+            propagateUnused(node, data)
+        }
 
-            if (node.isReturn()) {
-                markFirstPreviousAsUsed(node, data)
-            } else {
-                propagateUnused(node, data)
-            }
+        override fun visitFunctionExitNode(node: FunctionExitNode, data: ValueUsageData) {
+            propagateContext(node, data)
+
+            var unusedFromExitPaths = 0
+
+            node.previousNodes
+                .filterNot { it.isInvalidPrev(node) }
+                .forEach {
+                    when (it) {
+                        is JumpNode -> {
+                            if (data.removeUnused(it) != null) unusedFromExitPaths += 1
+                        }
+                        is BlockExitNode -> {
+                            if (node.owner.isLambda() && (data.removeUnused(it) != null)) {
+                                unusedFromExitPaths += 1
+                            }
+                        }
+                        else -> {}
+                    }
+                }
+
+//            if (unusedFromExitPaths > 0 && node.owner.isLambda()) {
+//                node.owner.declaration
+//            }
         }
 
         override fun visitWhenExitNode(node: WhenExitNode, data: ValueUsageData) {
@@ -240,6 +274,10 @@ private class ValueUsageData {
 
     fun addUnused(node: CFGNode<*>, source: UnusedSource) {
         unusedValues[node.fir] = source
+    }
+
+    fun getUnused(node: CFGNode<*>) : UnusedSource? {
+        return unusedValues[node.fir]
     }
 
     fun removeUnused(node: CFGNode<*>) = unusedValues.remove(node.fir)
