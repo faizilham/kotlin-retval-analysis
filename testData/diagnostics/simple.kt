@@ -51,22 +51,31 @@ fun normalBool(x: Int) = x == 1
 @Discardable
 fun ignoredBool(x: Int) = x == 2
 
+fun weirdFlow(x: Int) : Int {
+    return normal1(normalOrNull(x) ?: if (x == 2) {
+        normal()    // TODO: should warn
+        return 2
+    } else {
+        return 1
+    })
+}
+
 fun binaries() {
     val l = listOf(1, 2, 3)
     val c = normalOrNull(4) ?: ignoredOrNull(1) ?: 1
 
-    <!UNUSED_RETURN_VALUE!>normalOrNull(4)<!> ?: ignoredOrNull(1) ?: 1
-    ignoredOrNull(4) ?: ignoredOrNull(1) ?: 1
+    <!UNUSED_RETURN_VALUE!>normalOrNull(2)<!> ?: ignoredOrNull(1) ?: return
+    ignoredOrNull(3) ?: ignoredOrNull(1) ?: return
 
     var b = (1 == normal()) == (ignored() == 1)
     <!UNUSED_RETURN_VALUE!>3 == 2<!>
     <!UNUSED_RETURN_VALUE!>(1 == normal()) == (ignored() == 1)<!>
 
     b = normalBool(2) && ignoredBool(2) || true
-    <!UNUSED_RETURN_VALUE!>normalBool(2)<!> && ignoredBool(2) || true
-    <!UNUSED_RETURN_VALUE!>normalBool(2)<!> && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || true
-    ignoredBool(2) && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || true
-    ignoredBool(2) && ignoredBool(2) || true
+    <!UNUSED_RETURN_VALUE!>normalBool(2)<!> && ignoredBool(2) || <!UNUSED_VALUE!>true<!>
+    <!UNUSED_RETURN_VALUE!>normalBool(2)<!> && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || <!UNUSED_VALUE!>true<!>
+    ignoredBool(2) && <!UNUSED_RETURN_VALUE!>normalBool(2)<!> || <!UNUSED_VALUE!>true<!>
+    ignoredBool(2) && ignoredBool(2) || <!UNUSED_VALUE!>true<!>
 
 }
 
@@ -101,7 +110,10 @@ fun indirectRefs() {
     doubleLamb(1)
 
     val litLambda = { 1 }
-    litLambda()             // TODO: should warn, literals not yet handled
+    <!UNUSED_RETURN_VALUE!>litLambda()<!>
+
+    val retLambda = { { ignored() } }
+    <!UNUSED_RETURN_VALUE!>retLambda()()<!>
 }
 
 fun looping() : Int {
@@ -129,7 +141,11 @@ fun testflow() {
 
     <!UNUSED_RETURN_VALUE!>1 + 2<!>
     print(1 + 2)
-    2
+    <!UNUSED_VALUE!>2<!>
+    <!UNUSED_VALUE!>true<!>
+    <!UNUSED_VALUE!>x<!>
+    Unit
+    <!UNUSED_VALUE!>{ x: Int -> x + 1 }<!>
 
     if (1 + 1 == 2) {
         <!UNUSED_RETURN_VALUE!>normal()<!>

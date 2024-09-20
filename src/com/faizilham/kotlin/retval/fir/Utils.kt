@@ -30,6 +30,7 @@ object Utils {
     object Warnings {
         /** Unused return value warning factory */
         val UNUSED_RETURN_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
+        val UNUSED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
     }
 }
 

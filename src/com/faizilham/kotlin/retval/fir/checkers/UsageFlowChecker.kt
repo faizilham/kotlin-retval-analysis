@@ -10,11 +10,14 @@ import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
 import org.jetbrains.kotlin.fir.analysis.checkers.cfa.FirControlFlowChecker
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
+import org.jetbrains.kotlin.fir.declarations.utils.isSynthetic
+import org.jetbrains.kotlin.fir.expressions.FirExpression
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.expressions.arguments
 import org.jetbrains.kotlin.fir.references.symbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.fir.types.resolvedType
 
 object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
     private val checkedCFGKinds = setOf(
@@ -24,7 +27,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
     )
 
     override fun analyze(graph: ControlFlowGraph, reporter: DiagnosticReporter, context: CheckerContext) {
-        if (graph.kind !in checkedCFGKinds) {
+        if (graph.kind !in checkedCFGKinds || graph.declaration?.isSynthetic != false) {
             return
         }
 
@@ -40,7 +43,12 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
     private fun reportUnused(src: UnusedSource, reporter: DiagnosticReporter, context: CheckerContext) {
         when(src) {
-            is UnusedSource.Self -> reporter.reportOn(src.node.fir.source, Utils.Warnings.UNUSED_RETURN_VALUE, context)
+            is UnusedSource.AtomicExpr -> {
+                reporter.reportOn(src.node.fir.source, Utils.Warnings.UNUSED_VALUE, context)
+            }
+            is UnusedSource.FuncCall -> {
+                reporter.reportOn(src.node.fir.source, Utils.Warnings.UNUSED_RETURN_VALUE , context)
+            }
             is UnusedSource.Indirect -> src.sources.forEach { reportUnused(it, reporter, context) }
         }
     }
@@ -94,15 +102,36 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         }
 
         // usage changing visits
-
         override fun visitFunctionCallNode(node: FunctionCallNode, data: ValueUsageData) {
             val pathContext = propagateContext(node, data)
             val used =  pathContext.argumentScopeLevel > 0 ||
-                        node.fir.isDiscardable() ||
-                        isInvokingDiscardable(node, data)
+                    node.fir.isDiscardable() ||
+                    isInvokingDiscardable(node, data)
 
             if (!used) {
-                data.addUnused(node, UnusedSource.Self(node))
+                data.addUnused(node, UnusedSource.FuncCall(node))
+            }
+        }
+
+        override fun visitLiteralExpressionNode(node: LiteralExpressionNode, data: ValueUsageData) {
+            checkUnusedLiteral(node, node.fir, data)
+        }
+
+        override fun visitQualifiedAccessNode(node: QualifiedAccessNode, data: ValueUsageData) {
+            checkUnusedLiteral(node, node.fir, data)
+        }
+
+        override fun visitAnonymousFunctionExpressionNode(node: AnonymousFunctionExpressionNode, data: ValueUsageData) {
+            checkUnusedLiteral(node, node.fir, data)
+        }
+
+        private fun checkUnusedLiteral(node: CFGNode<*>, fir: FirExpression, data: ValueUsageData) {
+            val pathContext = propagateContext(node, data)
+            val used = pathContext.argumentScopeLevel > 0 ||
+                       fir.resolvedType.isDiscardable()
+
+            if (!used) {
+                data.addUnused(node, UnusedSource.AtomicExpr(node))
             }
         }
 
@@ -149,16 +178,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             markFirstPreviousAsUsed(node, data)
         }
 
-        override fun visitJumpNode(node: JumpNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateUnused(node, data)
-        }
-
-        override fun visitBlockExitNode(node: BlockExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateUnused(node, data)
-        }
-
         override fun visitFunctionExitNode(node: FunctionExitNode, data: ValueUsageData) {
             propagateContext(node, data)
 
@@ -186,14 +205,24 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             }
         }
 
+        override fun visitJumpNode(node: JumpNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateIndirectUnused(node, data)
+        }
+
+        override fun visitBlockExitNode(node: BlockExitNode, data: ValueUsageData) {
+            propagateContext(node, data)
+            propagateIndirectUnused(node, data)
+        }
+
         override fun visitWhenExitNode(node: WhenExitNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitWhenBranchResultExitNode(node: WhenBranchResultExitNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         // binary operators
@@ -207,42 +236,42 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                 data.removeUnused(argument)
             }
 
-            data.addUnused(node, UnusedSource.Self(node))
+            data.addUnused(node, UnusedSource.FuncCall(node))
         }
 
         override fun visitElvisLhsExitNode(node: ElvisLhsExitNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitElvisLhsIsNotNullNode(node: ElvisLhsIsNotNullNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitElvisExitNode(node: ElvisExitNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitBinaryAndExitLeftOperandNode(node: BinaryAndExitLeftOperandNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitBinaryAndExitNode(node: BinaryAndExitNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitBinaryOrExitLeftOperandNode(node: BinaryOrExitLeftOperandNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         override fun visitBinaryOrExitNode(node: BinaryOrExitNode, data: ValueUsageData) {
             propagateContext(node, data)
-            propagateUnused(node, data)
+            propagateIndirectUnused(node, data)
         }
 
         private fun markFirstPreviousAsUsed(node: CFGNode<*>, data: ValueUsageData) {
@@ -250,7 +279,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             data.removeUnused(valueNode)
         }
 
-        private fun propagateUnused(node: CFGNode<*>, data: ValueUsageData) {
+        private fun propagateIndirectUnused(node: CFGNode<*>, data: ValueUsageData) {
             val unusedSources = node.previousNodes.mapNotNull {
                 if (it.isInvalidPrev(node)) null
                 else data.removeUnused(it)
@@ -276,9 +305,10 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
 private class ValueUsageData {
     private val pathContexts : MutableMap<CFGNode<*>, PathContext> = mutableMapOf()
-    private val unusedValues : MutableMap<FirElement, UnusedSource> = mutableMapOf()
+    private val unusedValues : MutableMap<CFGNode<*>, UnusedSource> = mutableMapOf()
+    private val lastUnusedFirNode : MutableMap<FirElement, CFGNode<*>> = mutableMapOf()
+
     val discardableFunctionRef: MutableSet<FunctionRef> = mutableSetOf()
-    // using FirElement as key for EqualityOperatorCallNode case work-around
 
     fun getPathContext(node: CFGNode<*>) : PathContext {
         var context = pathContexts[node]
@@ -296,16 +326,27 @@ private class ValueUsageData {
     }
 
     fun addUnused(node: CFGNode<*>, source: UnusedSource) {
-        unusedValues[node.fir] = source
+        unusedValues[node] = source
+        lastUnusedFirNode[node.fir] = node
     }
 
     fun getUnused(node: CFGNode<*>) : UnusedSource? {
-        return unusedValues[node.fir]
+        return unusedValues[node]
     }
 
-    fun removeUnused(node: CFGNode<*>) = unusedValues.remove(node.fir)
+    fun removeUnused(node: CFGNode<*>) : UnusedSource? {
+        if (lastUnusedFirNode[node.fir] == node) {
+            lastUnusedFirNode.remove(node.fir)
+        }
 
-    fun removeUnused(fir: FirElement) = unusedValues.remove(fir)
+        return unusedValues.remove(node)
+    }
+
+    fun removeUnused(fir: FirElement) : UnusedSource? {
+        // work-around for EqualityOperatorCallNode case
+        val node = lastUnusedFirNode[fir] ?: return null
+        return unusedValues.remove(node)
+    }
 
     fun getUnusedValues() = unusedValues.values
 }
@@ -315,7 +356,8 @@ private data class PathContext(
 )
 
 private sealed interface UnusedSource {
-    class Self(val node: CFGNode<*>) : UnusedSource {}
+    class AtomicExpr(val node: CFGNode<*>) : UnusedSource {}
+    class FuncCall(val node: CFGNode<*>) : UnusedSource {}
     class Indirect(val node: CFGNode<*>, val sources: List<UnusedSource>) : UnusedSource {}
 }
 
