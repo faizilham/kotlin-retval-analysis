@@ -84,21 +84,30 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         }
 
         private fun updateArgumentScopeLevel(node: CFGNode<*>, data: ValueUsageData, change: Int) {
-            val currentContext = data.getPathContext(node)
-            val newContext = PathContext(currentContext.argumentScopeLevel + change)
+            val previousContext = getPreviousMinScopePathCtx(node, data) ?: PathContext()
 
-            propagateContext(node, data, newContext)
+            val currentContext = PathContext(previousContext.argumentScopeLevel + change)
+            data.addPathContext(node, currentContext)
         }
 
-        private fun propagateContext(node: CFGNode<*>, data: ValueUsageData, newContext: PathContext? = null) : PathContext {
-            val pathContext = newContext ?: data.getPathContext(node)
-
-            for (next in node.followingNodes) {
-                if (next.isInvalidNext(node)) continue
-                data.addPathContext(next, pathContext)
-            }
+        private fun propagateContext(node: CFGNode<*>, data: ValueUsageData) : PathContext {
+            val pathContext = getPreviousMinScopePathCtx(node, data)?.copy() ?: PathContext()
+            data.addPathContext(node, pathContext)
 
             return pathContext
+        }
+
+        private fun getPreviousMinScopePathCtx(node: CFGNode<*>, data: ValueUsageData ) : PathContext? {
+            return node.previousNodes.asSequence()
+                .filter { !it.isInvalidPrev(node) }
+                .mapNotNull { data.getPathContext(it) }
+                .fold(null) { acc: PathContext?, it ->
+                    if (acc == null || it.argumentScopeLevel < acc.argumentScopeLevel) {
+                        it
+                    } else {
+                        acc
+                    }
+                }
         }
 
         // usage changing visits
@@ -310,15 +319,8 @@ private class ValueUsageData {
 
     val discardableFunctionRef: MutableSet<FunctionRef> = mutableSetOf()
 
-    fun getPathContext(node: CFGNode<*>) : PathContext {
-        var context = pathContexts[node]
-
-        if (context == null) {
-            context = PathContext()
-            pathContexts[node] = context
-        }
-
-        return context
+    fun getPathContext(node: CFGNode<*>) : PathContext? {
+        return pathContexts[node]
     }
 
     fun addPathContext(node: CFGNode<*>, context: PathContext) {

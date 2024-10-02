@@ -10,7 +10,7 @@ fun normal() : Int {
 
 fun normal1(i : Int) = i + 1
 
-fun normal2(i : Int) : Int {
+fun normal2(i : Int, j : Int) : Int {
     val inc = { i + 1 }
 
     if (i == 2) return inc()
@@ -52,12 +52,31 @@ fun normalBool(x: Int) = x == 1
 fun ignoredBool(x: Int) = x == 2
 
 fun weirdFlow(x: Int) : Int {
-    return normal1(normalOrNull(x) ?: if (x == 2) {
+    <!UNUSED_RETURN_VALUE!>normal()<!>
+
+    return normal2(x, normalOrNull(x) ?: if (x == 3) {
         normal()    // TODO: should warn
-        return 2
+        return 3
     } else {
-        return 1
+        1
     })
+}
+
+fun weirdFlow2() : Int {
+    val l = listOf(1, 2, 3)
+    val result = l.map {
+        if (it == 2) {
+            normal()         // TODO: should warn
+//            return@map 1
+        }
+        else if (it == 3) {
+            normal()         // TODO: should warn
+//            return 2
+        }
+        it + 2
+    }
+
+    return result[0]
 }
 
 fun binaries() {
