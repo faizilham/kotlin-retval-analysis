@@ -60,38 +60,52 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
         // context changing visits
         override fun visitFunctionCallArgumentsEnterNode(node: FunctionCallArgumentsEnterNode, data: ValueUsageData) {
-            updateArgumentScopeLevel(node, data, 1)
+            increaseScopeContextLevel(node, data, ContextType.ValueConsuming)
         }
 
         override fun visitFunctionCallArgumentsExitNode(node: FunctionCallArgumentsExitNode, data: ValueUsageData) {
-            updateArgumentScopeLevel(node, data, -1)
+            decreaseScopeContextLevel(node, data)
         }
 
         override fun visitWhenBranchConditionEnterNode(node: WhenBranchConditionEnterNode, data: ValueUsageData) {
-            updateArgumentScopeLevel(node, data, 1)
+            increaseScopeContextLevel(node, data, ContextType.ValueConsuming)
         }
 
         override fun visitWhenBranchConditionExitNode(node: WhenBranchConditionExitNode, data: ValueUsageData) {
-            updateArgumentScopeLevel(node, data, -1)
+            decreaseScopeContextLevel(node, data)
+
         }
 
         override fun visitLoopConditionEnterNode(node: LoopConditionEnterNode, data: ValueUsageData) {
-            updateArgumentScopeLevel(node, data, 1)
+            increaseScopeContextLevel(node, data, ContextType.ValueConsuming)
         }
 
         override fun visitLoopConditionExitNode(node: LoopConditionExitNode, data: ValueUsageData) {
-            updateArgumentScopeLevel(node, data, -1)
+            decreaseScopeContextLevel(node, data)
+
         }
 
-        private fun updateArgumentScopeLevel(node: CFGNode<*>, data: ValueUsageData, change: Int) {
-            val previousContext = getPreviousMinScopePathCtx(node, data) ?: PathContext()
+        override fun visitBlockEnterNode(node: BlockEnterNode, data: ValueUsageData) {
+            increaseScopeContextLevel(node, data, ContextType.Block)
+        }
 
-            val currentContext = PathContext(previousContext.argumentScopeLevel + change)
+        private fun increaseScopeContextLevel(node: CFGNode<*>, data: ValueUsageData, contextType: ContextType): PathContext {
+            val lastContext = getPreviousMinScopePathCtx(node, data) ?: PathContext.defaultBlockContext
+
+            val currentContext = PathContext(lastContext, contextType)
             data.addPathContext(node, currentContext)
+            return currentContext
+        }
+
+        private fun decreaseScopeContextLevel(node: CFGNode<*>, data: ValueUsageData): PathContext {
+            val lastContext = getPreviousMinScopePathCtx(node, data) ?: PathContext.defaultBlockContext
+            val parentContext = lastContext.previousContext ?: PathContext.defaultBlockContext
+            data.addPathContext(node, parentContext)
+            return parentContext
         }
 
         private fun propagateContext(node: CFGNode<*>, data: ValueUsageData) : PathContext {
-            val pathContext = getPreviousMinScopePathCtx(node, data)?.copy() ?: PathContext()
+            val pathContext = getPreviousMinScopePathCtx(node, data)?.copy() ?: PathContext(null, ContextType.Block)
             data.addPathContext(node, pathContext)
 
             return pathContext
@@ -102,7 +116,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                 .filter { !it.isInvalidPrev(node) }
                 .mapNotNull { data.getPathContext(it) }
                 .fold(null) { acc: PathContext?, it ->
-                    if (acc == null || it.argumentScopeLevel < acc.argumentScopeLevel) {
+                    if (acc == null || it.contextDepth < acc.contextDepth) {
                         it
                     } else {
                         acc
@@ -113,7 +127,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         // usage changing visits
         override fun visitFunctionCallNode(node: FunctionCallNode, data: ValueUsageData) {
             val pathContext = propagateContext(node, data)
-            val used =  pathContext.argumentScopeLevel > 0 ||
+            val used =  pathContext.isValueConsuming() ||
                     node.fir.isDiscardable() ||
                     isInvokingDiscardable(node, data)
 
@@ -136,7 +150,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
         private fun checkUnusedLiteral(node: CFGNode<*>, fir: FirExpression, data: ValueUsageData) {
             val pathContext = propagateContext(node, data)
-            val used = pathContext.argumentScopeLevel > 0 ||
+            val used = pathContext.isValueConsuming() ||
                        fir.resolvedType.isDiscardable()
 
             if (!used) {
@@ -214,31 +228,33 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             }
         }
 
-        override fun visitJumpNode(node: JumpNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
-        }
 
         override fun visitBlockExitNode(node: BlockExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = decreaseScopeContextLevel(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
+        override fun visitJumpNode(node: JumpNode, data: ValueUsageData) {
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
+        }
+
+
         override fun visitWhenExitNode(node: WhenExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitWhenBranchResultExitNode(node: WhenBranchResultExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         // binary operators
         override fun visitEqualityOperatorCallNode(node: EqualityOperatorCallNode, data: ValueUsageData) {
             val pathContext = propagateContext(node, data)
 
-            if (pathContext.argumentScopeLevel > 0) return
+            if (pathContext.isValueConsuming()) return
 
 
             for (argument in node.fir.arguments) {
@@ -249,38 +265,38 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         }
 
         override fun visitElvisLhsExitNode(node: ElvisLhsExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitElvisLhsIsNotNullNode(node: ElvisLhsIsNotNullNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitElvisExitNode(node: ElvisExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitBinaryAndExitLeftOperandNode(node: BinaryAndExitLeftOperandNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitBinaryAndExitNode(node: BinaryAndExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitBinaryOrExitLeftOperandNode(node: BinaryOrExitLeftOperandNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         override fun visitBinaryOrExitNode(node: BinaryOrExitNode, data: ValueUsageData) {
-            propagateContext(node, data)
-            propagateIndirectUnused(node, data)
+            val pathContext = propagateContext(node, data)
+            propagateIndirectUnused(node, data, pathContext)
         }
 
         private fun markFirstPreviousAsUsed(node: CFGNode<*>, data: ValueUsageData) {
@@ -288,13 +304,13 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             data.removeUnused(valueNode)
         }
 
-        private fun propagateIndirectUnused(node: CFGNode<*>, data: ValueUsageData) {
+        private fun propagateIndirectUnused(node: CFGNode<*>, data: ValueUsageData, currentContext: PathContext) {
             val unusedSources = node.previousNodes.mapNotNull {
                 if (it.isInvalidPrev(node)) null
                 else data.removeUnused(it)
             }
 
-            if (unusedSources.isNotEmpty()) {
+            if (unusedSources.isNotEmpty() && !currentContext.isValueConsuming()) {
                 data.addUnused(node, flattenSingleIndirect(node, unusedSources))
             }
         }
@@ -353,9 +369,40 @@ private class ValueUsageData {
     fun getUnusedValues() = unusedValues.values
 }
 
-private data class PathContext(
-    val argumentScopeLevel: Int = 0,
-)
+private class PathContext public constructor(
+    val previousContext: PathContext?,
+    val contextType: ContextType,
+    contextDepth: Int? = null
+) {
+    val contextDepth : Int
+
+    companion object {
+        val defaultBlockContext = PathContext(null, ContextType.Block)
+    }
+
+    init {
+        if (contextDepth != null) {
+            this.contextDepth = contextDepth
+        } else {
+            this.contextDepth =
+                if (previousContext == null) 0
+                else previousContext.contextDepth + 1
+        }
+    }
+
+    fun isValueConsuming() : Boolean {
+        return contextType == ContextType.ValueConsuming
+    }
+
+    fun copy(): PathContext {
+        return PathContext(this.previousContext, this.contextType, this.contextDepth)
+    }
+}
+
+private enum class ContextType {
+    ValueConsuming,
+    Block
+}
 
 private sealed interface UnusedSource {
     class AtomicExpr(val node: CFGNode<*>) : UnusedSource {}

@@ -55,7 +55,7 @@ fun weirdFlow(x: Int) : Int {
     <!UNUSED_RETURN_VALUE!>normal()<!>
 
     return normal2(x, normalOrNull(x) ?: if (x == 3) {
-        normal()    // TODO: should warn
+        <!UNUSED_RETURN_VALUE!>normal()<!>
         return 3
     } else {
         1
@@ -66,12 +66,12 @@ fun weirdFlow2() : Int {
     val l = listOf(1, 2, 3)
     val result = l.map {
         if (it == 2) {
-            normal()         // TODO: should warn
-//            return@map 1
+            <!UNUSED_RETURN_VALUE!>normal()<!>
+            return@map 1
         }
         else if (it == 3) {
-            normal()         // TODO: should warn
-//            return 2
+            <!UNUSED_RETURN_VALUE!>normal()<!>
+            return 2
         }
         it + 2
     }
