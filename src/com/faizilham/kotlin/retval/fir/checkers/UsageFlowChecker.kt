@@ -1,6 +1,7 @@
 package com.faizilham.kotlin.retval.fir.checkers
 
 import com.faizilham.kotlin.retval.fir.Utils
+import com.faizilham.kotlin.retval.fir.containsAnnotation
 import com.faizilham.kotlin.retval.fir.isDiscardable
 import com.faizilham.kotlin.retval.fir.isInvoke
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
@@ -10,10 +11,9 @@ import org.jetbrains.kotlin.fir.analysis.checkers.cfa.FirControlFlowChecker
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.utils.isSynthetic
-import org.jetbrains.kotlin.fir.expressions.FirExpression
-import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
-import org.jetbrains.kotlin.fir.expressions.arguments
+import org.jetbrains.kotlin.fir.expressions.*
 import org.jetbrains.kotlin.fir.references.symbol
+import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.resolvedType
@@ -66,6 +66,14 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                 propagateIndirectUnused(node, data, pathContext)
             }
 
+            node is FunctionEnterNode -> {
+                handleFunctionEnterNode(node, data)
+            }
+
+            node is FunctionExitNode -> {
+                handleFunctionExitNode(node, data)
+            }
+
             node is FunctionCallNode -> {
                 handleFunctionCallNode(node, data)
             }
@@ -81,10 +89,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             node is VariableAssignmentNode -> {
                 propagateContext(node, data)
                 markFirstPreviousAsUsed(node, data)
-            }
-
-            node is FunctionExitNode -> {
-                handleFunctionExitNode(node, data)
             }
 
             node is EqualityOperatorCallNode -> {
@@ -118,12 +122,47 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         val pathContext = propagateContext(node, data)
         val used =  pathContext.isValueConsuming() ||
                     node.fir.isDiscardable() ||
-                    isInvokingDiscardable(node, data)
+                    isInvokingDiscardable(node, data) ||
+                    isPropagatingSameUseDiscardable(node, data)
 
         if (!used) {
             data.addUnused(node, UnusedSource.FuncCall(node))
         }
     }
+
+    private fun isInvokingDiscardable(node: FunctionCallNode, data: ValueUsageData) : Boolean {
+        if (!node.fir.isInvoke()) return false
+
+        val originalSymbol =
+            (node.fir.dispatchReceiver as? FirQualifiedAccessExpression)?.calleeReference?.symbol
+                ?: return false
+
+        return originalSymbol.toFunctionRef() in data.discardableFunctionRef
+    }
+
+    private fun isPropagatingSameUseDiscardable(node: FunctionCallNode, data: ValueUsageData) : Boolean {
+        val sameUseIndexes = node.fir.getSameUseParameterIndexes()
+        if (sameUseIndexes.isEmpty()) return false
+
+        val arguments = node.fir.argumentList.arguments
+        val sameUse = sameUseIndexes.map { arguments[it] }
+
+        return sameUse.all {
+            when (it) {
+                is FirAnonymousFunctionExpression -> {
+                    it.anonymousFunction.toFunctionRef() in data.discardableFunctionRef
+                }
+                is FirCallableReferenceAccess -> {
+                    it.isDiscardable()
+                }
+                is FirQualifiedAccessExpression -> {
+                    it.calleeReference.symbol?.toFunctionRef() in data.discardableFunctionRef
+                }
+                else -> false
+            }
+        }
+    }
+
 
     private fun handleVariableDeclarationNode(node: VariableDeclarationNode, data: ValueUsageData) {
         propagateContext(node, data)
@@ -153,8 +192,15 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         }
     }
 
+    private fun handleFunctionEnterNode(node: FunctionEnterNode, data: ValueUsageData){
+        val lastContext = getPreviousMinScopePathCtx(node, data) ?: PathContext.defaultBlockContext
+
+        val currentContext = PathContext(lastContext, ContextType.Block, 0)
+        data.addPathContext(node, currentContext)
+    }
+
     private fun handleFunctionExitNode(node: FunctionExitNode, data: ValueUsageData) {
-        propagateContext(node, data)
+        decreaseScopeContextLevel(node, data)
 
         val isLambda = node.owner.isLambda()
         var mustUseReturnValues = 0
@@ -176,7 +222,9 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         if (isLambda && mustUseReturnValues == 0) {
             node.owner.declaration
                 ?.toFunctionRef()
-                ?.let{ data.discardableFunctionRef.add(it) }
+                ?.let{
+                    data.discardableFunctionRef.add(it)
+                }
         }
     }
 
@@ -240,16 +288,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         }
     }
 
-    private fun isInvokingDiscardable(node: FunctionCallNode, data: ValueUsageData) : Boolean {
-        if (!node.fir.isInvoke()) return false
-
-        val originalSymbol =
-            (node.fir.dispatchReceiver as? FirQualifiedAccessExpression)?.calleeReference?.symbol
-                ?: return false
-
-        return originalSymbol.toFunctionRef() in data.discardableFunctionRef
-    }
-
     private fun propagateIndirectUnused(node: CFGNode<*>, data: ValueUsageData, currentContext: PathContext) {
         val unusedSources = node.previousNodes.mapNotNull {
             if (it.isInvalidPrev(node)) null
@@ -311,6 +349,16 @@ private fun CFGNode<*>.isIndirectUnusedNodes(): Boolean {
 }
 
 // Other Helpers
+private fun FirFunctionCall.getSameUseParameterIndexes() : List<Int> {
+    val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return emptyList()
+    return funcSymbol.valueParameterSymbols.asSequence()
+        .withIndex()
+        .filter { (_, it) ->
+            it.containsAnnotation(Utils.Constants.SameUseClassId)
+        }
+        .map { (i, _) -> i}
+        .toList()
+}
 
 private fun FirDeclaration.toFunctionRef() : FunctionRef = FunctionRef.Lambda(this)
 private fun FirBasedSymbol<*>.toFunctionRef() : FunctionRef = FunctionRef.Identifier(this)

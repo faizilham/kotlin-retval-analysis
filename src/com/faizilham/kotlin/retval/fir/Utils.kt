@@ -8,6 +8,7 @@ import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.resolve.isInvoke
+import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
@@ -21,6 +22,7 @@ object Utils {
         val DiscardableClassId = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
         val MayUseClassId = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
         val AnyUseClassId = ClassId(PACKAGE_FQN, Name.identifier("AnyUse"))
+        val SameUseClassId = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
 
         val BuiltInDiscardable : Set<ClassId> = setOf(
             ClassId.fromString("kotlin/contracts/CallsInPlace")
@@ -52,10 +54,13 @@ fun FirCallableReferenceAccess.isDiscardable() : Boolean {
 }
 
 fun hasDiscardableAnnotation(fir: FirQualifiedAccessExpression) : Boolean {
-    val annotations = fir.calleeReference.toResolvedFunctionSymbol()?.resolvedAnnotationClassIds
-    val hasDiscardable = annotations?.any { it == Utils.Constants.DiscardableClassId } ?: false
+    val funcSymbol = fir.calleeReference.toResolvedFunctionSymbol() ?: return false
 
-    return hasDiscardable
+    return funcSymbol.containsAnnotation(Utils.Constants.DiscardableClassId)
+}
+
+fun FirBasedSymbol<*>.containsAnnotation(classId: ClassId) : Boolean {
+    return resolvedAnnotationClassIds.contains(classId)
 }
 
 fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke() ?: false
