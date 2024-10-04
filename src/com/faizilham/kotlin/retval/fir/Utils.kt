@@ -2,6 +2,7 @@ package com.faizilham.kotlin.retval.fir
 
 import com.faizilham.kotlin.retval.fir.attributes.usageObligation
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
+import org.jetbrains.kotlin.diagnostics.error0
 import org.jetbrains.kotlin.diagnostics.warning0
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
@@ -33,6 +34,12 @@ object Utils {
         /** Unused return value warning factory */
         val UNUSED_RETURN_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
         val UNUSED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
+    }
+
+    object Errors {
+        val SAME_USE_INVALID_TARGET : KtDiagnosticFactory0 by error0<KtExpression>()
+        val SAME_USE_NOT_A_FUNCTION : KtDiagnosticFactory0 by error0<KtExpression>()
+        val SAME_USE_MISMATCH_RETURN_TYPE : KtDiagnosticFactory0 by error0<KtExpression>()
     }
 }
 

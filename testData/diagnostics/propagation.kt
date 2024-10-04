@@ -19,6 +19,10 @@ fun <R> noContractRun(block: () -> R): R {
     return block()
 }
 
+fun invalidSameUse1(<!SAME_USE_MISMATCH_RETURN_TYPE!>@SameUse block: () -> String<!>) = 1
+
+fun invalidSameUse2(<!SAME_USE_NOT_A_FUNCTION!>@SameUse x: Int<!>) = x
+
 @OptIn(ExperimentalContracts::class)
 inline fun <R> myRun(@SameUse block: () -> R): R {
     contract {
@@ -62,6 +66,7 @@ fun simpleProp() {
     myRun { myRun { myRun { ignored() } } }
 
     myRun {
+        <!UNUSED_RETURN_VALUE!>normal()<!>
         if (1 == 2) {
             ignored()
         } else {
