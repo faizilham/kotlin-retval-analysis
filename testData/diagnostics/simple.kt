@@ -1,6 +1,6 @@
 package foo.bar
 
-import com.faizilham.kotlin.retval.Discardable
+import com.faizilham.kotlin.retval.annotations.*
 
 @Discardable
 data class Pair(val x:Int, val y: Int)

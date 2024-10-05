@@ -21,6 +21,12 @@ public class DiagnosticTestGenerated extends AbstractDiagnosticTest {
   }
 
   @Test
+  @TestMetadata("consuming.kt")
+  public void testConsuming() {
+    runTest("testData/diagnostics/consuming.kt");
+  }
+
+  @Test
   @TestMetadata("propagation.kt")
   public void testPropagation() {
     runTest("testData/diagnostics/propagation.kt");

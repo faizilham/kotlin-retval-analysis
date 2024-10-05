@@ -1,8 +1,6 @@
 package foo.baz
 
-import com.faizilham.kotlin.retval.Discardable
-import com.faizilham.kotlin.retval.MayUse
-import com.faizilham.kotlin.retval.AnyUse
+import com.faizilham.kotlin.retval.annotations.*
 
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.InvocationKind
