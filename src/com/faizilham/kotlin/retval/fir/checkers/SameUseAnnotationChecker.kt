@@ -25,13 +25,14 @@ object SameUseAnnotationChecker : FirAnnotationChecker(MppCheckerKind.Common) {
         val param = annotationTarget as? FirValueParameter
             ?: return reporter.reportOn(annotationTarget.source, Utils.Errors.SAME_USE_INVALID_TARGET, context)
 
-        val funcRetType = param.containingFunctionSymbol.resolvedReturnType
         val paramType = param.returnTypeRef.coneType
 
         if (!paramType.isSomeFunctionType(session)) {
             reporter.reportOn(param.source, Utils.Errors.SAME_USE_NOT_A_FUNCTION, context)
             return
         }
+
+        val funcRetType = param.containingFunctionSymbol.resolvedReturnType
 
         if (!paramType.returnType(session).isSubtypeOf(funcRetType, session)) {
             reporter.reportOn(param.source, Utils.Errors.SAME_USE_MISMATCH_RETURN_TYPE, context)

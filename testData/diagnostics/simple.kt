@@ -2,6 +2,7 @@ package foo.bar
 
 import com.faizilham.kotlin.retval.Discardable
 
+@Discardable
 data class Pair(val x:Int, val y: Int)
 
 fun normal() : Int {
@@ -27,6 +28,8 @@ fun other() {
     <!UNUSED_RETURN_VALUE!>normal()<!>
     <!UNUSED_RETURN_VALUE!>1 + 2<!>
     ignored()
+
+    Pair(1, 2)
 
     val x = if (normal() == 1) 1 + 1 else 2 + 2
 

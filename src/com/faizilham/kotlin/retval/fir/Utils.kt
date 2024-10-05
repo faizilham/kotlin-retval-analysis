@@ -4,6 +4,8 @@ import com.faizilham.kotlin.retval.fir.attributes.usageObligation
 import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
 import org.jetbrains.kotlin.diagnostics.error0
 import org.jetbrains.kotlin.diagnostics.warning0
+import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.declarations.hasAnnotation
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
@@ -43,27 +45,27 @@ object Utils {
     }
 }
 
-fun FirFunctionCall.isDiscardable() : Boolean {
-    if (resolvedType.isDiscardable()) {
+fun FirFunctionCall.isDiscardable(session: FirSession) : Boolean {
+    if (resolvedType.isDiscardable(session)) {
         return true
     }
 
-    return hasDiscardableAnnotation(this)
+    return hasDiscardableAnnotation(session)
 }
 
-fun FirCallableReferenceAccess.isDiscardable() : Boolean {
+fun FirCallableReferenceAccess.isDiscardable(session: FirSession) : Boolean {
     val returnType = resolvedType.typeArguments.firstOrNull()?.type
-    if (returnType?.isDiscardable() == true) {
+    if (returnType?.isDiscardable(session) == true) {
         return true
     }
 
-    return hasDiscardableAnnotation(this)
+    return hasDiscardableAnnotation(session)
 }
 
-fun hasDiscardableAnnotation(fir: FirQualifiedAccessExpression) : Boolean {
-    val funcSymbol = fir.calleeReference.toResolvedFunctionSymbol() ?: return false
+fun FirQualifiedAccessExpression.hasDiscardableAnnotation(session: FirSession) : Boolean {
+    val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return false
 
-    return funcSymbol.containsAnnotation(Utils.Constants.DiscardableClassId)
+    return funcSymbol.hasAnnotation(Utils.Constants.DiscardableClassId, session)
 }
 
 fun FirBasedSymbol<*>.containsAnnotation(classId: ClassId) : Boolean {
@@ -72,10 +74,16 @@ fun FirBasedSymbol<*>.containsAnnotation(classId: ClassId) : Boolean {
 
 fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke() ?: false
 
-fun ConeKotlinType.isDiscardable() : Boolean {
-    return isUnitOrNullableUnit ||
+fun ConeKotlinType.isDiscardable(session: FirSession) : Boolean {
+    return  isUnitOrNullableUnit ||
             isBuiltInDiscardable(classId) ||
+            hasDiscardableAnnotation(session) ||
             (attributes.usageObligation?.isMayUse() ?: false)
+}
+
+fun ConeKotlinType.hasDiscardableAnnotation(session: FirSession) : Boolean {
+    val regularClassSymbol = toRegularClassSymbol(session) ?: return false
+    return regularClassSymbol.hasAnnotation(Utils.Constants.DiscardableClassId, session)
 }
 
 fun isBuiltInDiscardable(classId: ClassId?) : Boolean {

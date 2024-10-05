@@ -6,7 +6,7 @@ import org.jetbrains.kotlin.fir.resolve.dfa.cfg.CFGNode
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 
 
-class ValueUsageData {
+class ValueUsageData() {
     private val pathContexts : MutableMap<CFGNode<*>, PathContext> = mutableMapOf()
     private val unusedValues : MutableMap<CFGNode<*>, UnusedSource> = mutableMapOf()
     private val lastUnusedFirNode : MutableMap<FirElement, CFGNode<*>> = mutableMapOf()

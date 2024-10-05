@@ -1,5 +1,6 @@
 package com.faizilham.kotlin.retval
 
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
 annotation class Discardable
 
 @Target(AnnotationTarget.TYPE)
