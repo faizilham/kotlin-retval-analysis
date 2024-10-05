@@ -1,9 +1,6 @@
 package com.faizilham.kotlin.retval.fir.checkers
 
-import com.faizilham.kotlin.retval.fir.Utils
-import com.faizilham.kotlin.retval.fir.containsAnnotation
-import com.faizilham.kotlin.retval.fir.isDiscardable
-import com.faizilham.kotlin.retval.fir.isInvoke
+import com.faizilham.kotlin.retval.fir.*
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
@@ -16,8 +13,9 @@ import org.jetbrains.kotlin.fir.references.symbol
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.fir.types.coneType
+import org.jetbrains.kotlin.fir.types.isSomeFunctionType
 import org.jetbrains.kotlin.fir.types.resolvedType
-import org.jetbrains.kotlin.fir.types.toRegularClassSymbol
 
 object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
     private val checkedCFGKinds = setOf(
@@ -31,7 +29,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             return
         }
 
-        println("analyze ${graph.name} ${graph.kind}")
+        println("analyze ${context.containingFile?.name} ${graph.name} ${graph.kind}")
 
         val analyzer = Analyzer(context)
 
@@ -39,6 +37,10 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
         for (source in analyzer.data.getUnusedValues()) {
             reportUnused(source, reporter, context)
+        }
+
+        for (source in analyzer.data.unconsumedValues) {
+            reporter.reportOn(source.source, Utils.Warnings.UNCONSUMED_VALUE, context)
         }
     }
 
@@ -125,19 +127,42 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         // Node handlers
         private fun handleFunctionCallNode(node: FunctionCallNode) {
             val pathContext = propagateContext(node)
+
+            if (node.fir.hasConsumeAnnotation(context.session)) {
+                consumeReceiver(node)
+            }
+
             val used =  pathContext.isValueConsuming() ||
-                    node.fir.isDiscardable(context.session) ||
-                    isInvokingDiscardable(node) ||
-                    isPropagatingSameUseDiscardable(node)
+                        node.fir.isDiscardable(context.session) ||
+                        isInvokingDiscardable(node) ||
+                        isPropagatingSameUseDiscardable(node)
 
             if (!used) {
                 data.addUnused(node, UnusedSource.FuncCall(node))
             }
 
-            if (node.fir.calleeReference.name.asString() == "Pair") {
-                val asClass = node.fir.resolvedType.toRegularClassSymbol(context.session) ?: return
-                println("${asClass.classId} ${asClass.resolvedAnnotationClassIds}")
+            if (!node.fir.hasDiscardableAnnotation(context.session) &&
+                node.fir.resolvedType.hasMustConsumeAnnotation(context.session)) {
+                data.unconsumedValues.add(node.fir)
             }
+        }
+
+        private fun consumeReceiver(node: FunctionCallNode) {
+            // TODO: handle this (FirThisReceiverExpression) and others?
+            // TODO: handle path --> unconsumed values may be not consumed in some branches
+
+            val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
+
+            val source = when (receiver) {
+                is FirFunctionCall -> receiver
+                is FirQualifiedAccessExpression -> {
+                    val symbol = receiver.calleeReference.symbol ?: return
+                    data.mustConsumeVariables[symbol] ?: return
+                }
+                else -> return
+            }
+
+            data.unconsumedValues.remove(source)
         }
 
         private fun isInvokingDiscardable(node: FunctionCallNode) : Boolean {
@@ -166,6 +191,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                         it.calleeReference.symbol?.toFunctionRef() in data.discardableFunctionRef
                     }
                     else -> false
+                    // TODO: handle other nodes?
                 }
             }
         }
@@ -175,8 +201,17 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             markFirstPreviousAsUsed(node)
 
             if (!node.fir.isVal) return
-            val symbol = node.fir.symbol
 
+            val varType = node.fir.returnTypeRef.coneType
+
+            if (varType.isSomeFunctionType(context.session)) {
+                checkDiscardableFunctionReference(node)
+            } else if (varType.hasMustConsumeAnnotation(context.session)) {
+                aliasMustUseValues(node) // ideas: use lastUnused from markFirstPreviousAsUsed
+            }
+        }
+
+        private fun checkDiscardableFunctionReference(node: VariableDeclarationNode) {
             val isDiscardableRef = node.firstPreviousNode.let {
                 when (it) {
                     is AnonymousFunctionExpressionNode -> {
@@ -190,12 +225,34 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                         quaReference in data.discardableFunctionRef
                     }
                     else -> false
+                    // TODO: handle other nodes?
                 }
             }
 
             if (isDiscardableRef) {
-                data.discardableFunctionRef.add(symbol.toFunctionRef())
+                data.discardableFunctionRef.add(node.fir.symbol.toFunctionRef())
             }
+        }
+
+        private fun aliasMustUseValues(node: VariableDeclarationNode) {
+            val symbol = node.fir.symbol
+            node.firstPreviousNode.let {
+                when (it) {
+                    is FunctionCallNode -> {
+                        data.mustConsumeVariables[symbol] = it.fir
+                    }
+
+                    is QualifiedAccessNode -> {
+                        val otherVar = it.fir.calleeReference.symbol ?: return@let
+                        data.mustConsumeVariables[symbol] = data.mustConsumeVariables[otherVar] ?: return@let
+                    }
+                    else -> {}
+
+                    // TODO: handle other nodes?
+                }
+            }
+
+            // TODO: handle other nodes?
         }
 
         private fun handleFunctionEnterNode(node: FunctionEnterNode){
@@ -316,9 +373,9 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             return UnusedSource.Indirect(node, sources)
         }
 
-        private fun markFirstPreviousAsUsed(node: CFGNode<*>) {
+        private fun markFirstPreviousAsUsed(node: CFGNode<*>) : UnusedSource? {
             val valueNode = node.firstPreviousNode
-            data.removeUnused(valueNode)
+            return data.removeUnused(valueNode)
         }
     }
 }

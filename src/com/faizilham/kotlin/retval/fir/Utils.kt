@@ -39,6 +39,7 @@ object Utils {
         /** Unused return value warning factory */
         val UNUSED_RETURN_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
         val UNUSED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
+        val UNCONSUMED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
     }
 
     object Errors {
@@ -72,6 +73,12 @@ fun FirQualifiedAccessExpression.hasDiscardableAnnotation(session: FirSession) :
     return funcSymbol.hasAnnotation(Utils.Constants.DiscardableClassId, session)
 }
 
+fun FirFunctionCall.hasConsumeAnnotation(session: FirSession) : Boolean {
+    val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return false
+
+    return funcSymbol.hasAnnotation(Utils.Constants.ConsumeClassId, session)
+}
+
 fun FirBasedSymbol<*>.containsAnnotation(classId: ClassId) : Boolean {
     return resolvedAnnotationClassIds.contains(classId)
 }
@@ -85,9 +92,15 @@ fun ConeKotlinType.isDiscardable(session: FirSession) : Boolean {
             (attributes.usageObligation?.isMayUse() ?: false)
 }
 
-fun ConeKotlinType.hasDiscardableAnnotation(session: FirSession) : Boolean {
+fun ConeKotlinType.hasDiscardableAnnotation(session: FirSession) =
+    hasClassAnnotation(session, Utils.Constants.DiscardableClassId)
+
+fun ConeKotlinType.hasMustConsumeAnnotation(session: FirSession) =
+    hasClassAnnotation(session, Utils.Constants.MustConsumeClassId)
+
+fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : Boolean{
     val regularClassSymbol = toRegularClassSymbol(session) ?: return false
-    return regularClassSymbol.hasAnnotation(Utils.Constants.DiscardableClassId, session)
+    return regularClassSymbol.hasAnnotation(classId, session)
 }
 
 fun isBuiltInDiscardable(classId: ClassId?) : Boolean {

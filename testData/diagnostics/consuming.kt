@@ -35,12 +35,14 @@ fun simple() {
     val block = { 1 }
 
     val task = DummyDeferred(block)
-    val task2 = DummyDeferred(block)  // TODO: Warn
+    val task2 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>  // TODO: Warn
     val task3 = DummyDeferred(block)
 
     task.delay()
     task2.delay()
     task3.cancel()
+
+    val x = DummyDeferred(block).stop()
 
     val result = task.await()
 }
