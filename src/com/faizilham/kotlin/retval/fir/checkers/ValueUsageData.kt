@@ -13,9 +13,6 @@ class ValueUsageData() {
 
     val discardableFunctionRef: MutableSet<FunctionRef> = mutableSetOf()
 
-    val mustConsumeVariables : MutableMap<FirBasedSymbol<*>, FirElement> = mutableMapOf()
-    val unconsumedValues : MutableSet<FirElement> = mutableSetOf()
-
     fun getPathContext(node: CFGNode<*>) : PathContext? {
         return pathContexts[node]
     }

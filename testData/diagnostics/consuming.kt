@@ -33,10 +33,15 @@ class DummyDeferred<T>(val block : () -> T) {
 
 fun simple() {
     val block = { 1 }
+    val block2 = { 2 }
+    val block3 = { 3 }
 
     val task = DummyDeferred(block)
-    val task2 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>  // TODO: Warn
+    val task2 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
     val task3 = DummyDeferred(block)
+
+    val task4 = if (1 == 2) <!UNCONSUMED_VALUE!>DummyDeferred(block2)<!> else task
+    val task5 = if (3 == 4) DummyDeferred(block2) else DummyDeferred(block3)
 
     task.delay()
     task2.delay()
@@ -44,5 +49,28 @@ fun simple() {
 
     val x = DummyDeferred(block).stop()
 
+    if (3 == 7) {
+        val x1 = task4.await()
+        val x2 = task5.await()
+    } else {
+        task5.cancel()
+    }
+
     val result = task.await()
+}
+
+fun insideNoCrossover() {
+    val block = { 1 }
+    val block2 = {
+        val task = DummyDeferred(block)
+        val task2 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+
+        task.await()
+    }
+
+    val task3 = <!UNCONSUMED_VALUE!>DummyDeferred(block2)<!>
+
+    val notCalled = {
+        task3.await()   // TODO: this is correct, but study what actually happened here
+    }
 }

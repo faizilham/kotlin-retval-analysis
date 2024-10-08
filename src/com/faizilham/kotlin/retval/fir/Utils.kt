@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
+import org.jetbrains.kotlin.fir.resolve.dfa.cfg.CFGNode
 import org.jetbrains.kotlin.fir.resolve.isInvoke
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.*
@@ -49,6 +50,13 @@ object Utils {
         val CONSUME_NOT_MEMBER_OR_EXT : KtDiagnosticFactory0 by error0<KtExpression>()
     }
 }
+
+fun CFGNode<*>.isInvalidNext(current: CFGNode<*>) = isDead || edgeFrom(current).kind.isBack
+fun CFGNode<*>.isInvalidPrev(current: CFGNode<*>) = isDead || edgeTo(current).kind.isBack
+
+fun CFGNode<*>.validNextSize() =
+    this.followingNodes.asSequence().filterNot { it.isInvalidNext(this) }.count()
+
 
 fun FirFunctionCall.isDiscardable(session: FirSession) : Boolean {
     if (resolvedType.isDiscardable(session)) {

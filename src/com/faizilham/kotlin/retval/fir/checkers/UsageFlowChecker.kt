@@ -29,7 +29,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             return
         }
 
-        println("analyze ${context.containingFile?.name} ${graph.name} ${graph.kind}")
+//        println("analyze ${context.containingFile?.name} ${graph.name} ${graph.kind}")
 
         val analyzer = Analyzer(context)
 
@@ -37,10 +37,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
         for (source in analyzer.data.getUnusedValues()) {
             reportUnused(source, reporter, context)
-        }
-
-        for (source in analyzer.data.unconsumedValues) {
-            reporter.reportOn(source.source, Utils.Warnings.UNCONSUMED_VALUE, context)
         }
     }
 
@@ -128,10 +124,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
         private fun handleFunctionCallNode(node: FunctionCallNode) {
             val pathContext = propagateContext(node)
 
-            if (node.fir.hasConsumeAnnotation(context.session)) {
-                consumeReceiver(node)
-            }
-
             val used =  pathContext.isValueConsuming() ||
                         node.fir.isDiscardable(context.session) ||
                         isInvokingDiscardable(node) ||
@@ -140,29 +132,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             if (!used) {
                 data.addUnused(node, UnusedSource.FuncCall(node))
             }
-
-            if (!node.fir.hasDiscardableAnnotation(context.session) &&
-                node.fir.resolvedType.hasMustConsumeAnnotation(context.session)) {
-                data.unconsumedValues.add(node.fir)
-            }
-        }
-
-        private fun consumeReceiver(node: FunctionCallNode) {
-            // TODO: handle this (FirThisReceiverExpression) and others?
-            // TODO: handle path --> unconsumed values may be not consumed in some branches
-
-            val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
-
-            val source = when (receiver) {
-                is FirFunctionCall -> receiver
-                is FirQualifiedAccessExpression -> {
-                    val symbol = receiver.calleeReference.symbol ?: return
-                    data.mustConsumeVariables[symbol] ?: return
-                }
-                else -> return
-            }
-
-            data.unconsumedValues.remove(source)
         }
 
         private fun isInvokingDiscardable(node: FunctionCallNode) : Boolean {
@@ -206,8 +175,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
 
             if (varType.isSomeFunctionType(context.session)) {
                 checkDiscardableFunctionReference(node)
-            } else if (varType.hasMustConsumeAnnotation(context.session)) {
-                aliasMustUseValues(node) // ideas: use lastUnused from markFirstPreviousAsUsed
             }
         }
 
@@ -232,27 +199,6 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             if (isDiscardableRef) {
                 data.discardableFunctionRef.add(node.fir.symbol.toFunctionRef())
             }
-        }
-
-        private fun aliasMustUseValues(node: VariableDeclarationNode) {
-            val symbol = node.fir.symbol
-            node.firstPreviousNode.let {
-                when (it) {
-                    is FunctionCallNode -> {
-                        data.mustConsumeVariables[symbol] = it.fir
-                    }
-
-                    is QualifiedAccessNode -> {
-                        val otherVar = it.fir.calleeReference.symbol ?: return@let
-                        data.mustConsumeVariables[symbol] = data.mustConsumeVariables[otherVar] ?: return@let
-                    }
-                    else -> {}
-
-                    // TODO: handle other nodes?
-                }
-            }
-
-            // TODO: handle other nodes?
         }
 
         private fun handleFunctionEnterNode(node: FunctionEnterNode){
@@ -427,7 +373,6 @@ private fun FirFunctionCall.getSameUseArguments() : List<FirExpression> {
 
 private fun FirDeclaration.toFunctionRef() : FunctionRef = FunctionRef.Lambda(this)
 private fun FirBasedSymbol<*>.toFunctionRef() : FunctionRef = FunctionRef.Identifier(this)
-private fun CFGNode<*>.isInvalidPrev(current: CFGNode<*>) = isDead || edgeTo(current).kind.isBack
 
 private fun ControlFlowGraph.isLambda() =
     kind == ControlFlowGraph.Kind.AnonymousFunction ||
