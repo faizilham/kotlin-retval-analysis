@@ -59,6 +59,19 @@ fun simple() {
     val result = task.await()
 }
 
+fun retvalue() : DummyDeferred<Int> {
+    val newdef = { x: Int -> DummyDeferred { x } }
+
+    val task = <!UNCONSUMED_VALUE!>newdef(1)<!> // task can be unused in else part
+
+    if (3 == 7) {
+        return task
+    } else {
+        val task2 = newdef(2)
+        return task2
+    }
+}
+
 fun insideNoCrossover() {
     val block = { 1 }
     val block2 = {

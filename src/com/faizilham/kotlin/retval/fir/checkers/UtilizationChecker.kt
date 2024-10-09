@@ -20,29 +20,37 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             return
         }
 
+//        if (graph.name.toString() != "retvalue") return
+
         println("analyze utilization ${context.containingFile?.name} ${graph.name} ${graph.kind}")
 
         val analyzer = Analyzer(context)
         analyzer.analyzeGraph(graph)
 
+        val unutilizedSources : MutableSet<FirElement> = mutableSetOf()
+
         for (pathInfo in analyzer.finalPathInfos) {
             for (source in pathInfo.getUnutilized()) {
-                reportUnutilizedValue(source, reporter, context)
+                collectUnutilizedValue(source, unutilizedSources)
             }
+        }
+
+        for (fir in unutilizedSources) {
+            reporter.reportOn(fir.source, Utils.Warnings.UNCONSUMED_VALUE, context)
         }
     }
 
-    private fun reportUnutilizedValue(src: ValueSource, reporter: DiagnosticReporter, context: CheckerContext) {
+    private fun collectUnutilizedValue(src: ValueSource, collector: MutableSet<FirElement>) {
         when(src) {
-            is ValueSource.FuncCall -> reporter.reportOn(src.node.fir.source, Utils.Warnings.UNCONSUMED_VALUE , context)
+            is ValueSource.FuncCall -> collector.add(src.node.fir)
             is ValueSource.Indirect -> {
-                src.sources.forEach { reportUnutilizedValue(it, reporter, context) }
+                src.sources.forEach { collectUnutilizedValue(it, collector) }
             }
-            is ValueSource.QualifiedAccess -> {}
+            is ValueSource.QualifiedAccess -> {} // Qualified access is not a true source of unutilized value
         }
     }
 
-    private class Analyzer(val context: CheckerContext) {
+    private class Analyzer(val context: CheckerContext, val logging: Boolean = false) {
         val data = UtilizationData()
         val finalPathInfos : MutableList<PathInfo> = mutableListOf()
 
@@ -63,7 +71,13 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                 node is QualifiedAccessNode -> handleQualifiedAccess(node, info)
                 node is FunctionCallNode -> handleFuncCallNode(node, info)
                 node is VariableDeclarationNode -> handleVariableDeclaration(node, info)
+                node.isReturnNode() -> handleReturnNode(node, info)
                 node.isIndirectValueSource() -> { propagateValueSource(node, info) }
+
+//                node is PostponedLambdaExitNode -> {
+//                    println("ple ${node.previousNodes.size} ${node.fir.anonymousFunction.invocationKind}")
+//                }
+
                 else -> {}
             }
 
@@ -100,7 +114,14 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
             if (valueSource is ValueSource.QualifiedAccess) {
                 consumeValueSource(info, valueSource.source)
+            } else if (valueSource is ValueSource.Indirect) {
+                valueSource.sources.forEach { consumeValueSource(info, it) }
             }
+        }
+
+        private fun handleReturnNode(node: CFGNode<*>, info: PathInfo) {
+            val valueSource = propagateValueSource(node, info) ?: return
+            consumeValueSource(info, valueSource)
         }
 
         private fun handleVariableDeclaration(node: VariableDeclarationNode, info: PathInfo) {
@@ -137,7 +158,6 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                                 .mapNotNull { data.pathInfos[it] }
                                 .toList()
 
-
             val info = when(pathInfos.size) {
                 0 -> PathInfo()
                 1 -> if (node.firstPreviousNode.validNextSize() == 1) pathInfos[0] else pathInfos[0].copy()
@@ -152,7 +172,7 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
         // Value source
 
-        private fun propagateValueSource(node: CFGNode<*>, info: PathInfo) {
+        private fun propagateValueSource(node: CFGNode<*>, info: PathInfo) : ValueSource.Indirect? {
             var hasUnutilized = false
             val valueSources = node.previousNodes.mapNotNull {
                 val valSrc = if (it.isInvalidPrev(node)) null
@@ -173,7 +193,11 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                 if (hasUnutilized) {
                     info.addUnutilized(newSource)
                 }
+
+                return newSource
             }
+
+            return null
         }
 
         private fun flattenSingleIndirect(node: CFGNode<*>, sources: List<ValueSource>): ValueSource.Indirect {
@@ -185,6 +209,13 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             }
 
             return ValueSource.Indirect(node, sources)
+        }
+
+        private fun log(message: Any? = null) {
+            if (logging) {
+                if (message == null) println()
+                else println(message)
+            }
         }
 
     }
@@ -294,6 +325,14 @@ fun List<PathInfo>.mergeInfos() : PathInfo {
     }
 
     return result
+}
+
+private fun CFGNode<*>.isReturnNode(): Boolean {
+    val nextIsExit = followingNodes.firstOrNull() is FunctionExitNode ||
+                     followingNodes.lastOrNull() is FunctionExitNode
+
+    return  (this is JumpNode && nextIsExit) ||
+            (this is BlockExitNode && nextIsExit && owner.isLambda())
 }
 
 private fun CFGNode<*>.isIndirectValueSource(): Boolean {

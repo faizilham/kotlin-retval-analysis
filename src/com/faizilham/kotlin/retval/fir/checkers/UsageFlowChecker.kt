@@ -374,6 +374,3 @@ private fun FirFunctionCall.getSameUseArguments() : List<FirExpression> {
 private fun FirDeclaration.toFunctionRef() : FunctionRef = FunctionRef.Lambda(this)
 private fun FirBasedSymbol<*>.toFunctionRef() : FunctionRef = FunctionRef.Identifier(this)
 
-private fun ControlFlowGraph.isLambda() =
-    kind == ControlFlowGraph.Kind.AnonymousFunction ||
-    kind == ControlFlowGraph.Kind.AnonymousFunctionCalledInPlace

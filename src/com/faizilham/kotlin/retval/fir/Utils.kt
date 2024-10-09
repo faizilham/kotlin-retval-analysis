@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.CFGNode
+import org.jetbrains.kotlin.fir.resolve.dfa.cfg.ControlFlowGraph
 import org.jetbrains.kotlin.fir.resolve.isInvoke
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.*
@@ -114,3 +115,7 @@ fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : B
 fun isBuiltInDiscardable(classId: ClassId?) : Boolean {
     return classId != null && Utils.Constants.BuiltInDiscardable.contains(classId)
 }
+
+fun ControlFlowGraph.isLambda() =
+    kind == ControlFlowGraph.Kind.AnonymousFunction ||
+    kind == ControlFlowGraph.Kind.AnonymousFunctionCalledInPlace
