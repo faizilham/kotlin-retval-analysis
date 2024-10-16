@@ -79,15 +79,6 @@ fun simpleProp() {
     <!UNUSED_RETURN_VALUE!>applyIf(1 == 2, { normal() }, { ignored() })<!>
 }
 
-fun forFir() {
-    val ignored2 = { ignored() }
-
-    val z = myRun(ignored2)
-    val z0 = myRun { normal() }
-    val z1 = myRun2 { 1 + 2 }
-    val z2 = run { 4 + 5 }
-    val z3 = noContractRun { 1 + 3 }
-}
 
 fun forFir2() {
     val ignored2 = { ignored() }

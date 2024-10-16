@@ -59,6 +59,26 @@ fun simple() {
     val result = task.await()
 }
 
+fun branchingValue() {
+    val block = { 1 }
+
+    val task = DummyDeferred(block)
+    val task2 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+    val task3 = DummyDeferred(block)
+
+    val task4 = if (1 == 2) task else task2
+    val task5 = if (1 == 2) task else task3
+    val task6 = if (1 == 2) DummyDeferred(block) else task3
+
+    var x : Int? = 0
+    x = task.await()
+    task2.delay()
+    x = task3.await()
+    x = task4.await()
+    x = task5.await()
+    x = task6.await()
+}
+
 fun retvalue() : DummyDeferred<Int> {
     val newdef = { x: Int -> DummyDeferred { x } }
 

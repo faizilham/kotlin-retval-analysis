@@ -109,13 +109,14 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             consumeValueSource(info, valueSource)
         }
 
-        private fun consumeValueSource(info: PathInfo, valueSource: ValueSource) {
+        private fun consumeValueSource(info: PathInfo, valueSource: ValueSource, fromBranch: Boolean = false) {
             info.removeUnutilized(valueSource)
 
-            if (valueSource is ValueSource.QualifiedAccess) {
+            if (valueSource is ValueSource.QualifiedAccess && !fromBranch) {
                 consumeValueSource(info, valueSource.source)
             } else if (valueSource is ValueSource.Indirect) {
-                valueSource.sources.forEach { consumeValueSource(info, it) }
+                val isBranch = (valueSource.sources.size > 1) || fromBranch
+                valueSource.sources.forEach { consumeValueSource(info, it, isBranch) }
             }
         }
 
