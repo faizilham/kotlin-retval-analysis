@@ -107,3 +107,16 @@ fun insideNoCrossover() {
         task3.await()   // TODO: this is correct, but study what actually happened here
     }
 }
+
+fun exampleVar() {
+    val block = { 1 }
+    val x = DummyDeferred(block)
+
+
+    x.run { val y = this; val res = y.await() }
+
+    x.let { val y = it; val res = y.await() }
+    x.let { x1 -> val y = x1; val res = y.await() }
+
+    val upper = { x.await() }
+}

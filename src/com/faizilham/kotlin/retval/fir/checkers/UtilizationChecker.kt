@@ -7,7 +7,10 @@ import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
 import org.jetbrains.kotlin.fir.analysis.checkers.cfa.FirControlFlowChecker
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
+import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
+import org.jetbrains.kotlin.fir.declarations.FirValueParameter
 import org.jetbrains.kotlin.fir.declarations.utils.isSynthetic
+import org.jetbrains.kotlin.fir.references.FirThisReference
 import org.jetbrains.kotlin.fir.references.symbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
@@ -24,7 +27,7 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
         println("analyze utilization ${context.containingFile?.name} ${graph.name} ${graph.kind}")
 
-        val analyzer = Analyzer(context)
+        val analyzer = Analyzer(context, graph.name == "exampleVar")
         analyzer.analyzeGraph(graph)
 
         val unutilizedSources : MutableSet<FirElement> = mutableSetOf()
@@ -33,6 +36,13 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             for (source in pathInfo.getUnutilized()) {
                 collectUnutilizedValue(source, unutilizedSources)
             }
+        }
+
+        if (graph.name == "exampleVar") {
+            for (entry in analyzer.data.getLambdas().entries) {
+                println("${entry.key.hashCode()} ${entry.value}")
+            }
+            return
         }
 
         for (fir in unutilizedSources) {
@@ -47,6 +57,9 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                 src.sources.forEach { collectUnutilizedValue(it, collector) }
             }
             is ValueSource.QualifiedAccess -> {} // Qualified access is not a true source of unutilized value
+
+            is ValueSource.ValueParameter -> {} // TODO: handle non-annotated consuming warning?
+            is ValueSource.ThisReference -> {} // TODO: idem
         }
     }
 
@@ -68,12 +81,14 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             val info = propagatePathInfo(node)
 
             when {
+                node is FunctionEnterNode -> handleFunctionStart(node, info)
                 node is QualifiedAccessNode -> handleQualifiedAccess(node, info)
                 node is FunctionCallNode -> handleFuncCallNode(node, info)
                 node is VariableDeclarationNode -> handleVariableDeclaration(node, info)
                 node.isReturnNode() -> handleReturnNode(node, info)
                 node.isIndirectValueSource() -> { propagateValueSource(node, info) }
-
+                node is AnonymousFunctionExpressionNode -> addLambda(node.fir.anonymousFunction)
+                node is SplitPostponedLambdasNode -> node.lambdas.forEach { addLambda(it) }
 //                node is PostponedLambdaExitNode -> {
 //                    println("ple ${node.previousNodes.size} ${node.fir.anonymousFunction.invocationKind}")
 //                }
@@ -83,6 +98,12 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
             if (node.validNextSize() == 0) {
                 finalPathInfos.add(info)
+            }
+        }
+
+        private fun handleFunctionStart(node: FunctionEnterNode, info: PathInfo) {
+            for (valParam in node.fir.valueParameters) {
+                info.addVariable(valParam.symbol, ValueSource.ValueParameter(node, valParam))
             }
         }
 
@@ -106,31 +127,50 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
             val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
             val valueSource = data.getValueSource(receiver) ?: return
-            consumeValueSource(info, valueSource)
+
+            consumeValueSource(node, info, valueSource)
         }
 
-        private fun consumeValueSource(info: PathInfo, valueSource: ValueSource, fromBranch: Boolean = false) {
+        private fun consumeValueSource(node: CFGNode<*>, info: PathInfo, valueSource: ValueSource, fromBranch: Boolean = false) {
             info.removeUnutilized(valueSource)
 
             if (valueSource is ValueSource.QualifiedAccess && !fromBranch) {
-                consumeValueSource(info, valueSource.source)
+                consumeValueSource(node, info, valueSource.source)
             } else if (valueSource is ValueSource.Indirect) {
                 val isBranch = (valueSource.sources.size > 1) || fromBranch
-                valueSource.sources.forEach { consumeValueSource(info, it, isBranch) }
+                valueSource.sources.forEach { consumeValueSource(node, info, it, isBranch) }
+            } else if (valueSource is ValueSource.ValueParameter && node.owner.isLambda()) {
+                val anonFunction = node.owner.declaration as? FirAnonymousFunction ?: return
+                val lambdaInfo = data.getLambdaInfo(anonFunction) ?: return
+
+                val index = anonFunction.valueParameters.indexOf(valueSource.fir)
+
+                if (index > -1) {
+                    lambdaInfo.consumedParameters.add(index)
+                }
+            } else if (valueSource is ValueSource.ThisReference && node.owner.isLambda()) {
+                val anonFunction = node.owner.declaration as? FirAnonymousFunction ?: return
+                val lambdaInfo = data.getLambdaInfo(anonFunction) ?: return
+
+                lambdaInfo.consumingThis = true
             }
+        }
+
+        private fun addLambda(anonFunction: FirAnonymousFunction) {
+            val returningConsumable = anonFunction.returnTypeRef.coneType.hasMustConsumeAnnotation(context.session)
+
+            data.addLambdaInfo(anonFunction, LambdaInfo(consumingThis = false, returningConsumable))
+            log("lambda ${anonFunction.hashCode()} ${anonFunction.receiverParameter != null} ${anonFunction.valueParameters.map { it.symbol.name }}")
         }
 
         private fun handleReturnNode(node: CFGNode<*>, info: PathInfo) {
             val valueSource = propagateValueSource(node, info) ?: return
-            consumeValueSource(info, valueSource)
+            consumeValueSource(node, info, valueSource)
         }
 
         private fun handleVariableDeclaration(node: VariableDeclarationNode, info: PathInfo) {
             val varType = node.fir.returnTypeRef.coneType
             if (!varType.hasMustConsumeAnnotation(context.session)) return
-
-
-            val symbol = node.fir.symbol
 
             var valueSource = data.getValueSource(node.firstPreviousNode) ?: return
 
@@ -138,15 +178,20 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                  valueSource = valueSource.source
             }
 
-            info.knownVariables[symbol] = valueSource
+            info.addVariable(node.fir.symbol, valueSource)
         }
 
         private fun handleQualifiedAccess(node: QualifiedAccessNode, info: PathInfo) {
             val varType = node.fir.resolvedType
             if (!varType.hasMustConsumeAnnotation(context.session)) return
 
+            if (node.fir.calleeReference is FirThisReference) {
+                data.addValueSource(node, ValueSource.ThisReference(node))
+                return
+            }
+
             val symbol = node.fir.calleeReference.symbol ?: return
-            val valueSource = info.knownVariables[symbol] ?: return
+            val valueSource = info.getVariable(symbol) ?: return
 
             data.addValueSource(node, ValueSource.QualifiedAccess(node, valueSource))
         }
@@ -227,6 +272,7 @@ class UtilizationData {
     val pathInfos : MutableMap<CFGNode<*>, PathInfo> = mutableMapOf()
     private val valueSources : MutableMap<CFGNode<*>, ValueSource> = mutableMapOf()
     private val lastFirValueNode : MutableMap<FirElement, CFGNode<*>> = mutableMapOf()
+    private val consumingLambdas : MutableMap<FirAnonymousFunction, LambdaInfo> = mutableMapOf()
 
     fun addValueSource(node: CFGNode<*>, source: ValueSource) {
         valueSources[node] = source
@@ -241,12 +287,26 @@ class UtilizationData {
     }
 
     fun removeValueSource(node: CFGNode<*>) = valueSources.remove(node)
+
+    fun addLambdaInfo(func: FirAnonymousFunction, info: LambdaInfo) {
+        consumingLambdas[func] = info
+    }
+
+    fun getLambdaInfo(func: FirAnonymousFunction) = consumingLambdas[func]
+
+    fun getLambdas() = consumingLambdas
 }
+
+data class LambdaInfo(
+    var consumingThis : Boolean = false,
+    var returningConsumable : Boolean = false,
+    val consumedParameters : MutableSet<Int> = mutableSetOf(),
+)
 
 sealed class ValueSource(val node: CFGNode<*>) {
     class FuncCall(node: CFGNode<*>) : ValueSource(node) {
         override fun equals(other: Any?): Boolean {
-            return other is ValueSource.FuncCall && node == other.node
+            return other is FuncCall && node == other.node
         }
 
         override fun hashCode(): Int {
@@ -257,7 +317,7 @@ sealed class ValueSource(val node: CFGNode<*>) {
 
     class Indirect(node: CFGNode<*>, val sources: List<ValueSource>) : ValueSource(node) {
         override fun equals(other: Any?): Boolean {
-            return other is ValueSource.Indirect && node == other.node
+            return other is Indirect && node == other.node
         }
 
         override fun hashCode(): Int {
@@ -265,9 +325,31 @@ sealed class ValueSource(val node: CFGNode<*>) {
         }
     }
 
+    // pseudo sources
+
     class QualifiedAccess(node: CFGNode<*>, val source: ValueSource) : ValueSource(node) {
         override fun equals(other: Any?): Boolean {
-            return other is ValueSource.QualifiedAccess && node == other.node
+            return other is QualifiedAccess && node == other.node
+        }
+
+        override fun hashCode(): Int {
+            return node.hashCode()
+        }
+    }
+
+    class ValueParameter(node: CFGNode<*>, val fir: FirValueParameter) : ValueSource(node) {
+        override fun equals(other: Any?): Boolean {
+            return other is ValueParameter && node == other.node
+        }
+
+        override fun hashCode(): Int {
+            return node.hashCode()
+        }
+    }
+
+    class ThisReference(node: CFGNode<*>) : ValueSource(node) {
+        override fun equals(other: Any?): Boolean {
+            return other is ThisReference && node == other.node
         }
 
         override fun hashCode(): Int {
@@ -277,12 +359,22 @@ sealed class ValueSource(val node: CFGNode<*>) {
 }
 
 class PathInfo(
-    val knownVariables : MutableMap<FirBasedSymbol<*>, ValueSource> = mutableMapOf(),
+    private val knownVariables : MutableMap<FirBasedSymbol<*>, ValueSource> = mutableMapOf(),
     private val unutilizedValues : MutableSet<ValueSource> = mutableSetOf()
 ) {
     fun copy() : PathInfo {
         return PathInfo(knownVariables.toMutableMap(), unutilizedValues.toMutableSet())
     }
+
+    // variables
+
+    fun addVariable(variable: FirBasedSymbol<*>, valueSource: ValueSource) {
+        knownVariables[variable] = valueSource
+    }
+
+    fun getVariable(variable: FirBasedSymbol<*>) = knownVariables[variable]
+
+    // unutilized values
 
     fun addUnutilized(src: ValueSource.Indirect) {
         unutilizedValues.add(src)
