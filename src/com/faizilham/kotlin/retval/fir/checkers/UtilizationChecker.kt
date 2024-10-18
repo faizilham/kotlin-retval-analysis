@@ -56,9 +56,9 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             is ValueSource.QualifiedAccess -> {} // Qualified access is not a true source of unutilized value
 
             is ValueSource.ValueParameter -> {
-                collector.add(src.fir)
+                collector.add(src.fir)          // TODO: check parameter or not?
             }
-            is ValueSource.ThisReference -> {} // TODO: handle annotated non-consume
+            is ValueSource.ThisReference -> {} // Ignore "this" since @Consume on function is "primitive"
         }
     }
 
@@ -105,6 +105,12 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
             for (valParam in node.fir.valueParameters) {
                 val valSrc = ValueSource.ValueParameter(node, valParam)
+                val paramType = valSrc.fir.returnTypeRef.coneType
+
+                if (!paramType.hasMustConsumeAnnotation(context.session)) {
+                    continue
+                }
+
                 info.setVarValue(valParam.symbol, valSrc)
                 data.setVarOwner(valParam.symbol, node.owner)
 
@@ -117,17 +123,9 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
         private fun handleFuncCallNode(node: FunctionCallNode, info: PathInfo) {
             val funcInfo = getFunctionInfo(node.fir, info) ?: return
 
-            if (funcInfo.consumingThis) {
-                consumeReceiver(node, info)
-            }
-
-            if (funcInfo.consumedParameters.isNotEmpty()) {
-                consumeParameters(node, info, funcInfo)
-            }
-
-            if (funcInfo.consumedFreeVariables.isNotEmpty()) {
-                consumeFreeVariables(node, info, funcInfo)
-            }
+            consumeReceiver(node, info, funcInfo)
+            consumeParameters(node, info, funcInfo)
+            consumeFreeVariables(node, info, funcInfo)
 
             if (funcInfo.returningConsumable) {
                 val valueSource = ValueSource.FuncCall(node)
@@ -167,7 +165,9 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             return funcInfo
         }
 
-        private fun consumeReceiver(node: FunctionCallNode, info: PathInfo) {
+        private fun consumeReceiver(node: FunctionCallNode, info: PathInfo, funcInfo: FunctionInfo) {
+            if (!funcInfo.consumingThis) return
+
             val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
 
             var valueSource = data.getValueSource(receiver)
@@ -184,24 +184,20 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
         }
 
         private fun consumeParameters(node: FunctionCallNode, info: PathInfo, funcInfo: FunctionInfo) {
-            node.fir.argumentList.arguments.forEachIndexed { i, arg ->
-                if ((i !in funcInfo.consumedParameters) ||
-                    (!arg.resolvedType.hasMustConsumeAnnotation(context.session))) {
-                    return@forEachIndexed
-                }
-
-                val valueSource = data.getValueSource(arg) ?: return@forEachIndexed
+            for (consumedId in funcInfo.consumedParameters) {
+                val arg = node.fir.argumentList.arguments.getOrNull(consumedId) ?: continue
+                val valueSource = data.getValueSource(arg) ?: continue
 
                 consumeValueSource(node, info, valueSource)
             }
         }
 
         private fun consumeFreeVariables(node: FunctionCallNode, info: PathInfo, funcInfo: FunctionInfo) {
-            funcInfo.consumedFreeVariables.forEach {
-                val currentKnownValue = info.getVarValue(it)?.utilVal ?: return@forEach
+            for (freeVar in funcInfo.consumedFreeVariables) {
+                val currentKnownValue = info.getVarValue(freeVar)?.utilVal ?: continue
 
                 // NOTE: using dummy for forcing indirect consumption, in case it's called in lambda
-                val dummyQualifiedAccess = ValueSource.QualifiedAccess(node, it, currentKnownValue)
+                val dummyQualifiedAccess = ValueSource.QualifiedAccess(node, freeVar, currentKnownValue)
 
                 consumeValueSource(node, info, dummyQualifiedAccess)
             }
