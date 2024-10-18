@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirValueParameter
+import org.jetbrains.kotlin.fir.declarations.hasAnnotation
 import org.jetbrains.kotlin.fir.declarations.utils.isSynthetic
 import org.jetbrains.kotlin.fir.expressions.*
 import org.jetbrains.kotlin.fir.references.FirThisReference
@@ -54,8 +55,10 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             }
             is ValueSource.QualifiedAccess -> {} // Qualified access is not a true source of unutilized value
 
-            is ValueSource.ValueParameter -> {} // TODO: handle non-annotated consuming warning?
-            is ValueSource.ThisReference -> {} // TODO: idem
+            is ValueSource.ValueParameter -> {
+                collector.add(src.fir)
+            }
+            is ValueSource.ThisReference -> {} // TODO: handle annotated non-consume
         }
     }
 
@@ -101,8 +104,13 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
             info.clearUnutilized() // NOTE: each function should only care about its internal unutilized TODO: other way?
 
             for (valParam in node.fir.valueParameters) {
-                info.setVarValue(valParam.symbol, ValueSource.ValueParameter(node, valParam))
+                val valSrc = ValueSource.ValueParameter(node, valParam)
+                info.setVarValue(valParam.symbol, valSrc)
                 data.setVarOwner(valParam.symbol, node.owner)
+
+                if (valParam.hasAnnotation(Utils.Constants.ConsumeClassId, context.session)) {
+                    info.addUnutilized(valSrc)
+                }
             }
         }
 
@@ -201,11 +209,11 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
         // TODO: refactor this
         private fun consumeValueSource(consumerNode: CFGNode<*>, info: PathInfo, valueSource: ValueSource, fromBranch: Boolean = false) {
-            info.removeUnutilized(valueSource)
-
             val consumingInLambda = consumerNode.owner.isLambda()
 
             if (valueSource is ValueSource.QualifiedAccess && !fromBranch) {
+                info.removeUnutilized(valueSource)
+
                 // TODO: find other way to know if symbol is free var, instead of tracking with data.variableOwner
                 if (consumingInLambda && consumerNode.owner != data.getVarOwner(valueSource.symbol)) {
                     val (lambdaInfo, _) = getLambda(consumerNode.owner.declaration) ?: return
@@ -214,19 +222,33 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                     consumeValueSource(consumerNode, info, valueSource.source)
                 }
             } else if (valueSource is ValueSource.Indirect) {
+                info.removeUnutilized(valueSource)
+
                 val isBranch = (valueSource.sources.size > 1) || fromBranch
                 valueSource.sources.forEach { consumeValueSource(consumerNode, info, it, isBranch) }
-            } else if (valueSource is ValueSource.ValueParameter && consumingInLambda) {
-                val (lambdaInfo, anonFunction) = getLambda(consumerNode.owner.declaration) ?: return
-                val paramIndex = anonFunction.valueParameters.indexOf(valueSource.fir)
+            } else if (valueSource is ValueSource.ValueParameter && !fromBranch) {
+                info.removeUnutilized(valueSource)
 
-                if (paramIndex > -1) {
-                    lambdaInfo.consumedParameters.add(paramIndex)
+                if (consumingInLambda) {
+                    val (lambdaInfo, anonFunction) = getLambda(consumerNode.owner.declaration) ?: return
+                    val paramIndex = anonFunction.valueParameters.indexOf(valueSource.fir)
+
+                    if (paramIndex > -1) {
+                        lambdaInfo.consumedParameters.add(paramIndex)
+                    }
                 }
-            } else if (valueSource is ValueSource.ThisReference && consumingInLambda) {
-                val (lambdaInfo, _) = getLambda(consumerNode.owner.declaration) ?: return
 
-                lambdaInfo.consumingThis = true
+                // TODO: warn non-annotated consumed? also for ThisReference
+
+            } else if (valueSource is ValueSource.ThisReference && !fromBranch) {
+                info.removeUnutilized(valueSource)
+
+                if (consumingInLambda) {
+                    val (lambdaInfo, _) = getLambda(consumerNode.owner.declaration) ?: return
+                    lambdaInfo.consumingThis = true
+                }
+            } else {
+                info.removeUnutilized(valueSource)
             }
         }
 
@@ -514,6 +536,16 @@ sealed class ValueSource(val node: CFGNode<*>) {
         }
     }
 
+    class ValueParameter(node: CFGNode<*>, val fir: FirValueParameter) : ValueSource(node) {
+        override fun equals(other: Any?): Boolean {
+            return other is ValueParameter && node == other.node
+        }
+
+        override fun hashCode(): Int {
+            return node.hashCode()
+        }
+    }
+
     // pseudo sources
 
     class QualifiedAccess(node: CFGNode<*>, val symbol: FirBasedSymbol<*>, val source: ValueSource) : ValueSource(node) {
@@ -526,15 +558,6 @@ sealed class ValueSource(val node: CFGNode<*>) {
         }
     }
 
-    class ValueParameter(node: CFGNode<*>, val fir: FirValueParameter) : ValueSource(node) {
-        override fun equals(other: Any?): Boolean {
-            return other is ValueParameter && node == other.node
-        }
-
-        override fun hashCode(): Int {
-            return node.hashCode()
-        }
-    }
 
     class ThisReference(node: CFGNode<*>) : ValueSource(node) {
         override fun equals(other: Any?): Boolean {
@@ -574,6 +597,10 @@ class PathInfo(
     }
 
     fun addUnutilized(src: ValueSource.FuncCall) {
+        unutilizedValues.add(src)
+    }
+
+    fun addUnutilized(src: ValueSource.ValueParameter) {
         unutilizedValues.add(src)
     }
 

@@ -35,6 +35,17 @@ fun otherStop(@Consume task: DummyDeferred<*>) {
     task.cancel()
 }
 
+fun notConsumed(<!UNCONSUMED_VALUE!>@Consume task: DummyDeferred<*><!>) {
+    if (1 == 1) {
+        val res = task.await()
+    } else {
+        // do nothing
+    }
+}
+
+// TODO: allow this? maybe weird because no "return is consumed" tracking?
+fun identityConsume(@Consume task: DummyDeferred<*>) = task
+
 fun simple() {
     val block = { 1 }
     val block2 = { 2 }
