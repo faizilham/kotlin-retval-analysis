@@ -68,12 +68,15 @@ fun FirFunctionCall.isDiscardable(session: FirSession) : Boolean {
 }
 
 fun FirCallableReferenceAccess.isDiscardable(session: FirSession) : Boolean {
-    val returnType = resolvedType.typeArguments.firstOrNull()?.type
-    if (returnType?.isDiscardable(session) == true) {
+    if (getReturnType()?.isDiscardable(session) == true) {
         return true
     }
 
     return hasDiscardableAnnotation(session)
+}
+
+fun FirCallableReferenceAccess.getReturnType() : ConeKotlinType? {
+    return resolvedType.typeArguments.lastOrNull()?.type
 }
 
 fun FirQualifiedAccessExpression.hasDiscardableAnnotation(session: FirSession) : Boolean {
@@ -82,7 +85,7 @@ fun FirQualifiedAccessExpression.hasDiscardableAnnotation(session: FirSession) :
     return funcSymbol.hasAnnotation(Utils.Constants.DiscardableClassId, session)
 }
 
-fun FirFunctionCall.hasConsumeAnnotation(session: FirSession) : Boolean {
+fun FirQualifiedAccessExpression.hasConsumeAnnotation(session: FirSession) : Boolean {
     val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return false
 
     return funcSymbol.hasAnnotation(Utils.Constants.ConsumeClassId, session)

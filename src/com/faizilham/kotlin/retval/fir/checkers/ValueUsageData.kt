@@ -110,3 +110,5 @@ sealed interface FunctionRef {
         }
     }
 }
+fun FirDeclaration.toFunctionRef() : FunctionRef = FunctionRef.Lambda(this)
+fun FirBasedSymbol<*>.toFunctionRef() : FunctionRef = FunctionRef.Identifier(this)

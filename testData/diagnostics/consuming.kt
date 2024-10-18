@@ -31,6 +31,10 @@ class DummyDeferred<T>(val block : () -> T) {
 
 @Consume fun DummyDeferred<*>.stop() { cancel() }
 
+fun otherStop(@Consume task: DummyDeferred<*>) {
+    task.cancel()
+}
+
 fun simple() {
     val block = { 1 }
     val block2 = { 2 }
@@ -49,11 +53,13 @@ fun simple() {
 
     val x = DummyDeferred(block).stop()
 
+    val aliasStop = ::otherStop
+
     if (3 == 7) {
         val x1 = task4.await()
-        val x2 = task5.await()
+        aliasStop(task5)
     } else {
-        task5.cancel()
+        otherStop(task5)
     }
 
     val result = task.await()
@@ -108,15 +114,99 @@ fun insideNoCrossover() {
     }
 }
 
-fun exampleVar() {
+fun withLambda() {
     val block = { 1 }
-    val x = DummyDeferred(block)
 
+    // case: parameter-consuming lambda, with explicit param and implicit it
 
-    x.run { val y = this; val res = y.await() }
+    val task1 = DummyDeferred(block)
+    val task2 = DummyDeferred(block)
 
-    x.let { val y = it; val res = y.await() }
-    x.let { x1 -> val y = x1; val res = y.await() }
+    val runner1 : (DummyDeferred<*>) -> Unit = { val y = it; val res = y.await() }
+    val runner2 = { x1 : DummyDeferred<*> -> val y = x1; val res = y.await() }
 
-    val upper = { x.await() }
+    runner1(task1)
+    runner2(task2)
+
+    // case: context object (this) consuming lambda
+
+    val task2a = DummyDeferred(block)
+    val task2b = DummyDeferred(block)
+
+    val runThis : DummyDeferred<*>.() -> Unit = { val res = this.await() }
+    val runThis2 : DummyDeferred<Int>.(Int) -> Unit = { val res = await() ?: it }
+
+    task2a.runThis()
+    task2b.runThis2(100)
+
+    // case: free variable consuming lambda
+
+    val task3 = DummyDeferred(block)
+    val task3a = DummyDeferred(block)
+    val task4 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+    val task4a = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+
+    val run3 = { val res = task3.await(); task3a.cancel() }
+    val run4 = { val res = task4.await() }
+    val run4a = { val res = task4a.await() }
+
+    if (1 == 1) {
+        run3()
+    } else {
+        runner1(task3)
+        otherStop(task3a)
+    }
+
+    if (2 == 2) {
+        run4()
+    }
+
+    // case: multiple lambda indirection
+
+    val task5 = DummyDeferred(block)
+
+    val run5 = { val res = runner1(task5) }
+    val runInside5 = {
+        val inside = { run5() }
+        inside()
+    }
+
+    runInside5()
+
+    // case: another lambda indirection
+
+    val indirectRun = { it : DummyDeferred<*>, n: Int ->
+        val inside = {
+            if (n > 1) {
+                val res = it.await()
+            } else {
+                val res = runner2(it)
+            }
+        }
+
+        if (n > 0) {
+            inside()
+        } else {
+            it.cancel()
+        }
+    }
+
+    val task6 = DummyDeferred(block)
+    indirectRun(task6, 1)
+
+    // case (limitation): escaping must-consume value is not tracked
+
+    val createEscaping = { i: Int ->
+        val escapingTask = <!UNCONSUMED_VALUE!>DummyDeferred({ i })<!>
+        val runner = { val res = escapingTask.await() }
+        runner
+    }
+
+    val escapingRunner = createEscaping(1234)
+    escapingRunner()
+
+    // TODO: using .run and .let
+    // x.run { val y = this; val res = y.await() }
+    // x.let { val y = it; val res = y.await() }
+    // x.let { x1 -> val y = x1; val res = y.await() }
 }

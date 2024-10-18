@@ -11,7 +11,7 @@ annotation class SameUse
 @Target(AnnotationTarget.CLASS)
 annotation class MustConsume
 
-@Target(AnnotationTarget.FUNCTION)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.VALUE_PARAMETER)
 annotation class Consume
 
 //
