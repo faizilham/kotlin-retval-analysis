@@ -131,12 +131,15 @@ fun withLambda() {
     // case: parameter-consuming lambda, with explicit param and implicit it
 
     val task1 = DummyDeferred(block)
+    val task1a = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
     val task2 = DummyDeferred(block)
 
     val runner1 : (DummyDeferred<*>) -> Unit = { val y = it; val res = y.await() }
     val runner2 = { x1 : DummyDeferred<*> -> val y = x1; val res = y.await() }
+    val doNothing = { x : DummyDeferred<*> -> x.delay() }
 
     runner1(task1)
+    doNothing(task1a)
     runner2(task2)
 
     // case: context object (this) consuming lambda and extension functions
@@ -147,6 +150,7 @@ fun withLambda() {
     val task2d = DummyDeferred(block)
     val task2e = DummyDeferred(block)
     val task2f = DummyDeferred(block)
+    val task2g = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
 
     val runThis : DummyDeferred<*>.() -> Unit = { val res = this.await() }
     val runThis2 : DummyDeferred<Int>.(Int) -> Unit = { val res = await() ?: it }
@@ -155,6 +159,8 @@ fun withLambda() {
     val stopper3 : DummyDeferred<*>.() -> Unit = ::stopWithParam
     val asDefaultRun : Int.(DummyDeferred<Int>) -> Unit = { val res = it.await() ?: this }
 
+    val withDoNothing : DummyDeferred<*>.() -> Unit = { this.delay() }
+
     task2a.runThis()
     task2b.runThis2(100)
     task2c.stopper()
@@ -162,16 +168,20 @@ fun withLambda() {
     task2e.stopper3()
     (9876).asDefaultRun(task2f)
 
+    task2g.withDoNothing()
+
     // case: free variable consuming lambda
 
     val task3 = DummyDeferred(block)
     val task3a = DummyDeferred(block)
     val task4 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
     val task4a = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+    val task4b = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
 
     val run3 = { val res = task3.await(); task3a.cancel() }
     val run4 = { val res = task4.await() }
-    val run4a = { val res = task4a.await() }
+    val run4a = { val res = task4a.await() }  // never called
+    val doNothing4b = { task4b.delay() }
 
     if (1 == 1) {
         run3()
@@ -183,6 +193,8 @@ fun withLambda() {
     if (2 == 2) {
         run4()
     }
+
+    doNothing4b()
 
     // case: multiple lambda indirection
 
