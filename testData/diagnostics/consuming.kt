@@ -31,7 +31,7 @@ class DummyDeferred<T>(val block : () -> T) {
 
 @Consume fun DummyDeferred<*>.stop() { cancel() }
 
-fun otherStop(@Consume task: DummyDeferred<*>) {
+fun stopWithParam(@Consume task: DummyDeferred<*>) {
     task.cancel()
 }
 
@@ -64,13 +64,13 @@ fun simple() {
 
     val x = DummyDeferred(block).stop()
 
-    val aliasStop = ::otherStop
+    val aliasStop = ::stopWithParam
 
     if (3 == 7) {
         val x1 = task4.await()
         aliasStop(task5)
     } else {
-        otherStop(task5)
+        stopWithParam(task5)
     }
 
     val result = task.await()
@@ -139,16 +139,28 @@ fun withLambda() {
     runner1(task1)
     runner2(task2)
 
-    // case: context object (this) consuming lambda
+    // case: context object (this) consuming lambda and extension functions
 
     val task2a = DummyDeferred(block)
     val task2b = DummyDeferred(block)
+    val task2c = DummyDeferred(block)
+    val task2d = DummyDeferred(block)
+    val task2e = DummyDeferred(block)
+    val task2f = DummyDeferred(block)
 
     val runThis : DummyDeferred<*>.() -> Unit = { val res = this.await() }
     val runThis2 : DummyDeferred<Int>.(Int) -> Unit = { val res = await() ?: it }
+    val stopper = DummyDeferred<*>::stop
+    val stopper2 = DummyDeferred<*>::cancel
+    val stopper3 : DummyDeferred<*>.() -> Unit = ::stopWithParam
+    val asDefaultRun : Int.(DummyDeferred<Int>) -> Unit = { val res = it.await() ?: this }
 
     task2a.runThis()
     task2b.runThis2(100)
+    task2c.stopper()
+    stopper2(task2d)
+    task2e.stopper3()
+    (9876).asDefaultRun(task2f)
 
     // case: free variable consuming lambda
 
@@ -165,7 +177,7 @@ fun withLambda() {
         run3()
     } else {
         runner1(task3)
-        otherStop(task3a)
+        stopWithParam(task3a)
     }
 
     if (2 == 2) {

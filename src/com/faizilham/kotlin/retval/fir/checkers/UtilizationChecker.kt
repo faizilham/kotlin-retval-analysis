@@ -7,6 +7,7 @@ import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
 import org.jetbrains.kotlin.fir.analysis.checkers.cfa.FirControlFlowChecker
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
+import org.jetbrains.kotlin.fir.containingClassLookupTag
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirValueParameter
@@ -15,10 +16,12 @@ import org.jetbrains.kotlin.fir.declarations.utils.isSynthetic
 import org.jetbrains.kotlin.fir.expressions.*
 import org.jetbrains.kotlin.fir.references.FirThisReference
 import org.jetbrains.kotlin.fir.references.symbol
+import org.jetbrains.kotlin.fir.references.toResolvedCallableSymbol
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.coneType
+import org.jetbrains.kotlin.fir.types.isExtensionFunctionType
 import org.jetbrains.kotlin.fir.types.isSomeFunctionType
 import org.jetbrains.kotlin.fir.types.resolvedType
 
@@ -142,6 +145,7 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
 
             return FunctionInfo(
                 isLambda = false,
+                isClassMemberOrExtension = fir.isClassMemberOrExtension(),
                 returningConsumable = fir.resolvedType.hasMustConsumeAnnotation(context.session),
                 returnIsConsumed = fir.hasDiscardableAnnotation(context.session),
                 consumingThis = fir.hasConsumeAnnotation(context.session),
@@ -150,16 +154,15 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
         }
 
         private fun resolveInvokeFunctionInfo(fir: FirFunctionCall, info: PathInfo) : FunctionInfo? {
-            val originalSymbol =
-                (fir.dispatchReceiver as? FirQualifiedAccessExpression)?.calleeReference?.symbol
-                    ?: return null
+            val originalRef = (fir.dispatchReceiver as? FirQualifiedAccessExpression)?.calleeReference ?: return null
+            val originalSymbol = originalRef.toResolvedCallableSymbol() ?: return null
 
             var funcInfo = info.getVarValue(originalSymbol)?.funcRef ?: return null
 
             // NOTE: invoking extension function causes the context object to be regarded as first argument
             //       the dispatchReceiver is no longer the context object, but the function reference
-            if (funcInfo.consumingThis) {
-                funcInfo = funcInfo.insertThisIntoFirstParameter()
+            if (funcInfo.isClassMemberOrExtension) {
+                funcInfo = funcInfo.convertThisToFirstParameter()
             }
 
             return funcInfo
@@ -256,9 +259,10 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
         }
 
         private fun addLambda(anonFunction: FirAnonymousFunction) {
+            val isExtension = anonFunction.receiverParameter != null
             val returningConsumable = anonFunction.returnTypeRef.coneType.hasMustConsumeAnnotation(context.session)
 
-            data.addLambdaInfo(anonFunction, FunctionInfo(true, returningConsumable))
+            data.addLambdaInfo(anonFunction, FunctionInfo(isLambda = true, isExtension, returningConsumable))
         }
 
         private fun handleReturnNode(node: CFGNode<*>, info: PathInfo) {
@@ -295,13 +299,16 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                     is FirCallableReferenceAccess -> {
                         val returnType = it.getReturnType() ?: return@let null
 
-                        FunctionInfo(
+                        val funcinfo = FunctionInfo(
                             isLambda = false,
+                            isClassMemberOrExtension = it.isClassMemberOrExtension(),
                             returningConsumable = returnType.hasMustConsumeAnnotation(context.session),
                             returnIsConsumed = it.hasDiscardableAnnotation(context.session),
                             consumingThis = it.hasConsumeAnnotation(context.session),
                             consumedParameters = it.getConsumedParameters()
                         )
+
+                        funcinfo
                     }
 
                     is FirQualifiedAccessExpression -> {
@@ -447,6 +454,7 @@ class UtilizationData {
 
 data class FunctionInfo(
     val isLambda: Boolean,
+    val isClassMemberOrExtension: Boolean,
     val returningConsumable : Boolean,
     var returnIsConsumed : Boolean = false,
     var consumingThis : Boolean = false,
@@ -454,17 +462,16 @@ data class FunctionInfo(
     val consumedFreeVariables : MutableSet<FirBasedSymbol<*>> = mutableSetOf()
 )
 
-fun FunctionInfo.insertThisIntoFirstParameter() : FunctionInfo {
-    if (!consumingThis) return this
-
+fun FunctionInfo.convertThisToFirstParameter() : FunctionInfo {
     val mappedParameters = consumedParameters.map { it + 1 }.toMutableSet()
-    mappedParameters.add(0)
+    if (consumingThis) mappedParameters.add(0)
 
     return FunctionInfo(
         isLambda,
+        isClassMemberOrExtension = false,
         returningConsumable,
         returnIsConsumed,
-        consumingThis = false,
+        consumingThis,
         consumedParameters = mappedParameters,
         consumedFreeVariables
     )
@@ -672,4 +679,9 @@ private fun FirQualifiedAccessExpression.getConsumedParameters() : MutableSet<In
         }
         .map { (i, _) -> i}
         .toMutableSet()
+}
+
+private fun FirQualifiedAccessExpression.isClassMemberOrExtension() : Boolean {
+    return  resolvedType.isExtensionFunctionType ||
+            (calleeReference.toResolvedFunctionSymbol()?.containingClassLookupTag() != null)
 }
