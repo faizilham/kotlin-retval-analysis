@@ -55,11 +55,7 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                 (node as? CFGNodeWithSubgraphs<*>)?.subGraphs?.forEach { analyzeGraph(it) }
             }
 
-            val finalInfo =
-                if (finalPathInfos.size == 1)
-                    finalPathInfos.first()
-                else
-                    finalPathInfos.mergeInfos()
+            val finalInfo = finalPathInfos.mergeInfos()
 
             for (source in finalInfo.getUnutilizedCreations()) {
                 collectUnutilizedValue(source)
@@ -112,8 +108,6 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                 )
             )
         }
-
-
 
         private fun analyzeNode(node: CFGNode<*>, finalPathInfos: MutableList<PathInfo>) {
             if (node.isDead) return
@@ -341,12 +335,8 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
                                 .mapNotNull { data.pathInfos[it] }
                                 .toList()
 
-            val info = when(pathInfos.size) {
-                0 -> PathInfo()
-                1 -> if (node.firstPreviousNode.validNextSize() == 1) pathInfos[0] else pathInfos[0].copy()
-                2 -> pathInfos[0].merge(pathInfos[1])
-                else -> pathInfos.mergeInfos()
-            }
+            val mustCopy = node.previousNodes.getOrNull(0)?.validNextSize() != 1
+            val info = pathInfos.mergeInfos(mustCopy)
 
             data.pathInfos[node] = info
 
@@ -657,6 +647,25 @@ class PathInfo(
     }
 }
 
+fun List<PathInfo>.mergeInfos(mustCopy : Boolean = false) : PathInfo {
+    val info = when(size) {
+        0 -> PathInfo()
+        1 -> if (mustCopy) get(0).copy() else get(0)
+        2 -> get(0).merge(get(1))
+        else -> {
+            var result = first()
+
+            asSequence().drop(1).forEach {
+                result = result.merge(it)
+            }
+
+            return result
+        }
+    }
+
+    return info
+}
+
 enum class NonLocalUtilization(val value: Int) {
     Utilized(4),
     Unutilized(2),
@@ -692,18 +701,6 @@ class NonLocalUtilLattice(private val value : Int = NonLocalUtilization.Inaccess
     fun equalTo(utilization: NonLocalUtilization) = value == utilization.value
 
     fun contains(utilization: NonLocalUtilization) = value.and(utilization.value) == utilization.value
-}
-
-fun List<PathInfo>.mergeInfos() : PathInfo {
-    assert(size > 1)
-
-    var result = first()
-
-    asSequence().drop(1).forEach {
-        result = result.merge(it)
-    }
-
-    return result
 }
 
 private fun CFGNode<*>.isReturnNode(): Boolean {
