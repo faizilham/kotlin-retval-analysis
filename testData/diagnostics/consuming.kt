@@ -35,13 +35,13 @@ fun stopWithParam(@Consume task: DummyDeferred<*>) {
     task.cancel()
 }
 
-fun notConsumed(<!UNCONSUMED_VALUE!>@Consume task: DummyDeferred<*><!>) {
-    if (1 == 1) {
-        val res = task.await()
-    } else {
-        // do nothing
-    }
-}
+//fun notConsumed(< ! UNCONSUMED_VALUE ! >@Consume task: DummyDeferred<*>< ! >) {
+//    if (1 == 1) {
+//        val res = task.await()
+//    } else {
+//        // do nothing
+//    }
+//}
 
 // TODO: allow this? maybe weird because no "return is consumed" tracking?
 fun identityConsume(@Consume task: DummyDeferred<*>) = task
@@ -121,7 +121,7 @@ fun insideNoCrossover() {
     val task3 = <!UNCONSUMED_VALUE!>DummyDeferred(block2)<!>
 
     val notCalled = {
-        task3.await()   // TODO: this is correct, but study what actually happened here
+        task3.await()
     }
 }
 
