@@ -91,6 +91,10 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                     handleFunctionCallNode(node)
                 }
 
+                node is QualifiedAccessNode -> {
+                    handleQualifiedAccessNode(node)
+                }
+
                 node.isAtomicExpression() -> {
                     checkUnusedLiteral(node, (node.fir as FirExpression))
                 }
@@ -100,8 +104,7 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
                 }
 
                 node is VariableAssignmentNode -> {
-                    propagateContext(node)
-                    markFirstPreviousAsUsed(node)
+                    handleVariableAssignmentNode(node)
                 }
 
                 node is EqualityOperatorCallNode -> {
@@ -176,6 +179,12 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             }
         }
 
+        private fun handleVariableAssignmentNode(node: VariableAssignmentNode) {
+            propagateContext(node)
+            markFirstPreviousAsUsed(node)
+            markReceiverAsUsed(node.fir.dispatchReceiver)
+        }
+
         private fun checkDiscardableFunctionReference(node: VariableDeclarationNode) {
             val isDiscardableRef = node.firstPreviousNode.let {
                 when (it) {
@@ -197,6 +206,24 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
             if (isDiscardableRef) {
                 data.discardableFunctionRef.add(node.fir.symbol.toFunctionRef())
             }
+        }
+
+        private fun handleQualifiedAccessNode(node: QualifiedAccessNode) {
+            markReceiverAsUsed(node.fir.dispatchReceiver)
+            checkUnusedLiteral(node, node.fir)
+        }
+
+        private fun markReceiverAsUsed(receiver: FirExpression?) {
+            if (receiver == null) return
+
+            val originalReceiver =
+                if (receiver is FirCheckedSafeCallSubject) {
+                    receiver.originalReceiverRef.value
+                } else {
+                    receiver
+                }
+
+            data.removeUnused(originalReceiver)
         }
 
         private fun handleFunctionEnterNode(node: FunctionEnterNode){
@@ -339,7 +366,6 @@ private fun CFGNode<*>.isValueConsumingContextEnd() : Boolean {
 
 private fun CFGNode<*>.isAtomicExpression(): Boolean {
     return  (this is LiteralExpressionNode) ||
-            (this is QualifiedAccessNode) ||
             (this is AnonymousFunctionExpressionNode)
 }
 
@@ -353,7 +379,8 @@ private fun CFGNode<*>.isIndirectUnusedNodes(): Boolean {
             (this is BinaryAndExitLeftOperandNode) ||
             (this is BinaryAndExitNode) ||
             (this is BinaryOrExitLeftOperandNode) ||
-            (this is BinaryOrExitNode)
+            (this is BinaryOrExitNode) ||
+            (this is ExitSafeCallNode)
 }
 
 // Other Helpers
@@ -368,3 +395,14 @@ private fun FirFunctionCall.getSameUseArguments() : List<FirExpression> {
         .mapNotNull { (i, _) -> argumentList.arguments.getOrNull(i)}
         .toList()
 }
+
+//data class IntList(var value : Int, var next: IntList?)
+//
+//
+//fun testlist() {
+//    val l = IntList(1, IntList(2, IntList(3, null)))
+//    val l2 = l.next
+//    val l3 = l.next?.next
+//
+//    l.next?.next?.value = 2
+//}

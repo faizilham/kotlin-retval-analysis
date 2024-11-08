@@ -3,7 +3,9 @@ package foo.bar
 import com.faizilham.kotlin.retval.annotations.*
 
 @Discardable
-data class Pair(val x:Int, val y: Int)
+data class Pair(var x:Int, var y: Int)
+
+data class Point(var x:Int, var y: Int)
 
 fun normal() : Int {
     return 1
@@ -202,4 +204,30 @@ fun test() {
 
         other()
     }
+}
+
+fun qualifiedAccessPath() {
+    val p = Point(1, 2)
+    val p2 = Point(2, 4)
+    val x = p.x + p.y
+    val z = Point(2, 3).x
+
+    p.x = 2
+
+    (if (1==2) p else p2).x = 3
+
+    <!UNUSED_RETURN_VALUE!>Point(3, 4)<!>
+    val z2 = x
+}
+
+data class IntList(var value : Int, var next: IntList?)
+
+fun qualifiedAccessPath2() {
+    val l = IntList(1, IntList(2, IntList(3, null)))
+    val l2 = l.next
+    val l3val = l.next?.next?.value
+
+    l.next?.next?.value = 2
+
+    <!UNUSED_VALUE!>l.next?.next?.value<!>
 }
