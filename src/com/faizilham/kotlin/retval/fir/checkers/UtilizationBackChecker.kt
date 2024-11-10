@@ -99,7 +99,7 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
                     else -> null
                 }
 
-            info.addVarValue(varSymbol, funcRef ?: FuncRefValue.Top)
+            data.pathInfos[node] = info.withNewVarValue(varSymbol, funcRef ?: FuncRefValue.Top)
         }
 
         private fun propagatePathInfo(node: CFGNode<*>) : FuncAnalysisPathInfo {
@@ -130,32 +130,24 @@ class FuncAnalysisData {
 data class VariableRecord(val owner: ControlFlowGraph, val isVal: Boolean)
 
 class FuncAnalysisPathInfo(
-    val variableValue: MutableMap<FirBasedSymbol<*>, FuncRefValue> = mutableMapOf(),
+    private val variableValue: DefaultMapLat<FirBasedSymbol<*>, FuncRefValue> = DefaultMapLat(FuncRefValue.Bot),
 ) : IPathInfo<FuncAnalysisPathInfo> {
     override fun merge(other: FuncAnalysisPathInfo): FuncAnalysisPathInfo {
-        val keys = this.variableValue.keys + other.variableValue.keys
-
-        val varValue = keys.associateWith { key ->
-            val left = this.variableValue[key] ?: FuncRefValue.Bot
-            val right = other.variableValue[key] ?: FuncRefValue.Bot
-
-            left.join(right)
-        }.toMutableMap()
-
-        return FuncAnalysisPathInfo(varValue)
+        val mergedVarValue = variableValue.join(other.variableValue)
+        return FuncAnalysisPathInfo(mergedVarValue)
     }
 
     override fun copy(): FuncAnalysisPathInfo {
-        return FuncAnalysisPathInfo(
-            variableValue.toMutableMap()
-        )
+        return FuncAnalysisPathInfo(variableValue.copy())
     }
 
-    fun addVarValue(varSymbol: FirBasedSymbol<*>, funcRef: FuncRefValue) {
-        variableValue[varSymbol] = funcRef
+    fun withNewVarValue(varSymbol: FirBasedSymbol<*>, funcRef: FuncRefValue): FuncAnalysisPathInfo {
+        val modified = copy()
+        modified.variableValue[varSymbol] = funcRef
+        return modified
     }
 
-    fun getVarValue(varSymbol: FirBasedSymbol<*>?) = variableValue[varSymbol]
+    fun getVarValue(varSymbol: FirBasedSymbol<*>?) = variableValue.getWithDefault(varSymbol)
 }
 
 interface IPathInfo<T: IPathInfo<T>> {
@@ -182,7 +174,39 @@ fun<T: IPathInfo<T>> List<T>.mergeAll(mustCopy : Boolean = false) : T? {
     return info
 }
 
-sealed interface FuncRefValue {
+interface Lattice<T: Lattice<T>> {
+    fun join(other: T): T
+}
+
+class DefaultMapLat<K, V: Lattice<V>> private constructor (val defaultVal: V, private val _map: MutableMap<K, V>)
+    : MutableMap<K, V> by _map, Lattice<DefaultMapLat<K, V>>
+{
+    constructor(defaultVal: V) : this(defaultVal, mutableMapOf())
+
+    override fun join(other: DefaultMapLat<K, V>): DefaultMapLat<K, V> {
+        val combinedKeys = keys + other.keys
+
+        val combined = DefaultMapLat<K, V>(defaultVal)
+
+        for (key in combinedKeys) {
+            val left = this[key] ?: defaultVal
+            val right = other[key] ?: defaultVal
+
+            combined[key] = left.join(right)
+        }
+
+        return combined
+    }
+
+    fun getWithDefault(key: K?) = this[key] ?: defaultVal
+
+    fun copy(): DefaultMapLat<K, V> {
+        return DefaultMapLat(defaultVal, _map.toMutableMap())
+    }
+}
+
+
+sealed interface FuncRefValue : Lattice<FuncRefValue> {
     data object Top : FuncRefValue
     data object Bot : FuncRefValue
 
@@ -214,7 +238,7 @@ sealed interface FuncRefValue {
         return this == Top || other == Bot || this == other
     }
 
-    fun join(other: FuncRefValue): FuncRefValue {
+    override fun join(other: FuncRefValue): FuncRefValue {
         if (this.leq(other)) {
             return other
         } else if (this.geq(other)) {
