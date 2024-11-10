@@ -2,6 +2,7 @@ package com.faizilham.kotlin.retval.fir
 
 import com.faizilham.kotlin.retval.fir.checkers.SameUseAnnotationChecker
 import com.faizilham.kotlin.retval.fir.checkers.UsageFlowChecker
+import com.faizilham.kotlin.retval.fir.checkers.UtilizationBackChecker
 import com.faizilham.kotlin.retval.fir.checkers.UtilizationChecker
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.analysis.checkers.declaration.DeclarationCheckers
@@ -13,7 +14,7 @@ class UsageAnalysisExtension(session: FirSession) : FirAdditionalCheckersExtensi
     override val declarationCheckers = DeclCheckers
 
     object DeclCheckers : DeclarationCheckers() {
-        override val controlFlowAnalyserCheckers = setOf(UsageFlowChecker, UtilizationChecker)
+        override val controlFlowAnalyserCheckers = setOf(UsageFlowChecker, UtilizationChecker, UtilizationBackChecker)
     }
 
     override val expressionCheckers = ExprCheckers

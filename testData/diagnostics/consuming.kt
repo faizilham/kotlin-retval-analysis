@@ -66,6 +66,8 @@ fun simple() {
 
     val aliasStop = ::stopWithParam
 
+    val otherStop = aliasStop
+
     if (3 == 7) {
         val x1 = task4.await()
         aliasStop(task5)
@@ -111,6 +113,7 @@ fun retvalue() : DummyDeferred<Int> {
 
 fun insideNoCrossover() {
     val block = { 1 }
+    val block1 = { 2 }
     val block2 = {
         val task = DummyDeferred(block)
         val task2 = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
@@ -123,6 +126,39 @@ fun insideNoCrossover() {
     val notCalled = {
         task3.await()
     }
+
+    val block3 : () -> Int
+    val block4 : () -> Int
+
+    if (1 == 2) {
+        block3 = block
+        block4 = block
+    } else {
+        block3 = block
+        block4 = block1
+    }
+
+    var block5 = block
+
+    val block6 = {
+        val inB1 = block3
+        val inB2 = block5
+    }
+}
+
+fun wrongCase() {
+    // TODO: this should not give warning
+    val block = { 1 }
+
+    val task : DummyDeferred<Int>;
+
+    if (1 == 1) {
+        task = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+    } else {
+        task = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+    }
+
+    val result = task.await()
 }
 
 fun withLambda() {
