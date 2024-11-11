@@ -282,21 +282,6 @@ fun List<PathInfo>.mergeInfos(mustCopy : Boolean = false) : PathInfo {
     return info
 }
 
-enum class UtilLattice(private val value: Int) {
-    Top(3),
-    RetUtil(2),
-    FnUtil(1),
-    Bot(0);
-
-    fun leq(other: UtilLattice) = value <= other.value
-
-    fun geq(other: UtilLattice) = value >= other.value
-
-    fun join(other: UtilLattice) = if (this.geq(other)) this else other
-
-    fun meet(other: UtilLattice) = if (this.leq(other)) this else other
-}
-
 enum class NonLocalUtilization(val value: Int) {
     Utilized(4),
     Unutilized(2),
