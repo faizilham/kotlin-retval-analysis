@@ -2,6 +2,7 @@ package com.faizilham.kotlin.retval.fir.checkers
 
 import com.faizilham.kotlin.retval.fir.*
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
+import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
 import org.jetbrains.kotlin.fir.analysis.checkers.cfa.FirControlFlowChecker
@@ -29,14 +30,20 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
         }
 
 //        val logging = context.containingFile?.name == "consuming.kt" && graph.name == "insideNoCrossover"
-        val logging = false
+        var logging = false
         val funcAnalyzer = FuncAnalysis(context, logging)
 
         funcAnalyzer.analyzeGraph(graph)
 
+        logging = context.containingFile?.name == "consuming.kt" && graph.name == "simple"
+
         val utilAnalyzer = UtilAnalysis(context, funcAnalyzer.data, logging)
 
         utilAnalyzer.analyzeGraph(graph)
+
+        for (warnedFir in utilAnalyzer.warnings) {
+            reporter.reportOn(warnedFir.source, Utils.Warnings.UNCONSUMED_VALUE, context)
+        }
     }
 
     class FuncAnalysis(private val context: CheckerContext, private val logging: Boolean = false) {
@@ -158,12 +165,25 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             when {
                 node is FunctionEnterNode -> handleFunctionStart(node, info)
                 node is FunctionCallNode -> handleFuncCallNode(node, info)
-                node is QualifiedAccessNode -> handleQualifiedAccess(node, info)
-//                node is VariableDeclarationNode -> handleVariableDeclaration(node, info)
+//                node is QualifiedAccessNode -> handleQualifiedAccess(node, info)
+                node is VariableDeclarationNode -> handleVariableDeclaration(node, info)
 //                node is VariableAssignmentNode -> handleVarAssign(node, info)
 
                 node.isReturnNode() -> handleReturnNode(node, info)
-//                node.isIndirectValueSource() -> {}
+                node.isIndirectValueSource() -> handleIndirectValueSource(node, info)
+            }
+
+            if (logging && (node is WhenEnterNode || node is WhenExitNode)) {
+                log("---branch log---")
+
+                for ((loc, util) in info.localUtils()) {
+                    when(loc) {
+                        is ValueRef.LocalVar -> { log("var ${loc.symbol} ut $util")}
+                        is ValueRef.Expr -> {} // { log("expr $loc ut ${util.value}")}
+                    }
+                }
+                log("--- end branch log ---")
+
             }
         }
 
@@ -172,6 +192,15 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             for ((call, util) in info.callSiteUtils()) {
                 if (!util.leq(UtilLattice.RT)) {
                     warnings.add(call)
+                }
+            }
+
+            if (logging) {
+                for ((loc, util) in info.localUtils()) {
+                    when(loc) {
+                        is ValueRef.LocalVar -> { log("var ${loc.symbol} ut $util")}
+                        is ValueRef.Expr -> {} // { log("expr $loc ut ${util.value}")}
+                    }
                 }
             }
 
@@ -212,6 +241,8 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             )
         }
 
+        // function call
+
         private fun handleFuncCallNode(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
             val funcInfo = getFunctionInfo(node) ?: return
 
@@ -219,8 +250,14 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             consumeParameters(node, info, funcInfo)
             consumeFreeVariables(node, info, funcInfo)
 
+
             if (funcInfo.returningConsumable && !funcInfo.returnIsConsumed) {
-                info.setCallSiteUtil(node.fir, info.getValRefUtil(node.fir.toValueRef()))
+                val callExprRef = getExprValueRef(node.fir, node) ?: return
+                val util = info.getValRefUtil(callExprRef)
+
+                log("SetCallSite ${node.fir.hashCode()} ut $util")
+
+                info.setCallSiteUtil(node.fir, util)
             }
         }
 
@@ -228,23 +265,22 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             if (!funcInfo.consumingThis) return
             val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
 
-            info.setValRefUtil(receiver.toValueRef(), UtilLattice.UT)
+            info.meetValRefUtil(getExprValueRef(receiver, node), UtilLattice.UT)
         }
 
         private fun consumeParameters(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
             for (consumedId in funcInfo.consumedParameters) {
                 val arg = node.fir.argumentList.arguments.getOrNull(consumedId) ?: continue
-                info.setValRefUtil(arg.toValueRef(), UtilLattice.UT)
+                info.meetValRefUtil(getExprValueRef(arg, node), UtilLattice.UT)
             }
         }
 
         private fun consumeFreeVariables(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
             for (freeVar in funcInfo.consumedFreeVariables) {
                 val valRef = getVarValueRef(freeVar, node) ?: continue
-                info.setValRefUtil(valRef, UtilLattice.UT)
+                info.meetValRefUtil(valRef, UtilLattice.UT)
             }
         }
-
 
         private fun getFunctionInfo(node: FunctionCallNode) : FunctionInfo? {
             val fir = node.fir
@@ -296,21 +332,96 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             }
         }
 
-        private fun handleQualifiedAccess(node: QualifiedAccessNode, info: UtilAnalysisPathInfo) {
-            val varType = node.fir.resolvedType
+        // variable & qualified access
+
+        private fun handleVariableDeclaration(node: VariableDeclarationNode, info: UtilAnalysisPathInfo) {
+            val varType = node.fir.returnTypeRef.coneType
             if (!varType.hasMustConsumeAnnotation(context.session)) return
 
-            val utilization = info.getValRefUtil(node.fir.toValueRef())
+            val varUtilization = getVarValueRef(node.fir.symbol, node)?.let { info.getValRefUtil(it) } ?: return
 
-            val valRef =
-                if (node.fir.calleeReference is FirThisReference) {
-                    ValueRef.ThisRef
-                } else {
-                    val symbol = node.fir.calleeReference.symbol ?: return
-                    getVarValueRef(symbol, node) ?: return
-                }
+            val initValRef = getExprValueRef(node.fir.initializer, node) ?: return
 
-            info.setValRefUtil(valRef, UtilLattice.UT)
+            log("VarDecl ${node.fir.symbol} ${node.fir.initializer?.hashCode()} $varUtilization")
+
+            info.meetValRefUtil(initValRef, varUtilization)
+        }
+
+//        private fun handleQualifiedAccess(node: QualifiedAccessNode, info: UtilAnalysisPathInfo) {
+//            val varType = node.fir.resolvedType
+//            if (!varType.hasMustConsumeAnnotation(context.session)) return
+//
+//            val utilization = info.getValRefUtil(node.fir.toValueRef())
+//
+//            val valRef =
+//                if (node.fir.calleeReference is FirThisReference) {
+//                    ValueRef.ThisRef
+//                } else {
+//                    val symbol = node.fir.calleeReference.symbol ?: return
+//                    log("QUA var $symbol ${utilization.value}")
+//
+//                    getVarValueRef(symbol, node) ?: return
+//                }
+//
+//
+//            info.setValRefUtil(valRef, utilization)
+//        }
+
+        private fun handleReturnNode(node: CFGNode<*>, info: UtilAnalysisPathInfo) {
+            val retTarget = node.firstPreviousNode.fir
+
+            if (retTarget !is FirExpression) return
+
+            info.meetValRefUtil(getExprValueRef(retTarget, node), UtilLattice.RT)
+        }
+
+        private fun handleIndirectValueSource(node: CFGNode<*>, info: UtilAnalysisPathInfo) {
+            val valRef = getValueRefFromNode(node) ?: return
+
+            val util = info.getValRefUtil(valRef)
+//            if (util == UtilLattice.Top) return
+
+            log("Ind $node ${valRef.hashCode()} $util ${node.previousNodes.size}")
+
+            for (prev in node.previousNodes) {
+                val prevRef = getValueRefFromNode(prev) ?: continue
+
+//                log("Ind prev $prev ${prevRef.hashCode()}")
+
+                info.meetValRefUtil(prevRef, util)
+            }
+        }
+
+        private fun getValueRefFromNode(node: CFGNode<*>) : ValueRef? {
+            val fir = node.fir
+
+            if (fir is FirExpression && fir.resolvedType.hasMustConsumeAnnotation(context.session)) {
+                return getExprValueRef(fir, node)
+            } else if (fir is FirWhenBranch && fir.result.resolvedType.hasMustConsumeAnnotation(context.session)) {
+                return getExprValueRef(fir.result, node)
+            }
+
+            return null
+        }
+
+        private fun getExprValueRef(expr: FirExpression?, caller: CFGNode<*>): ValueRef? {
+            if (expr == null) return null
+
+            if (expr !is FirQualifiedAccessExpression) {
+                return ValueRef.Expr(expr)
+            }
+
+            if (expr.calleeReference is FirThisReference) {
+                return ValueRef.ThisRef
+            }
+
+            val symbol = expr.calleeReference.symbol ?: return null
+
+            val varRef = getVarValueRef(symbol, caller)
+
+            if (varRef != null) return varRef
+
+            return ValueRef.Expr(expr)
         }
 
         private fun getVarValueRef(symbol: FirBasedSymbol<*>, caller: CFGNode<*>): ValueRef? {
@@ -327,15 +438,6 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             return ValueRef.LocalVar(symbol)
         }
 
-        private fun handleReturnNode(node: CFGNode<*>, info: UtilAnalysisPathInfo) {
-            val retTarget = node.firstPreviousNode.fir
-
-            if (retTarget !is FirExpression) return
-
-            info.setValRefUtil(retTarget.toValueRef(), UtilLattice.RT)
-        }
-
-
         //
         private fun propagatePathInfo(node: CFGNode<*>) : UtilAnalysisPathInfo {
             if (node is FunctionExitNode)
@@ -351,6 +453,10 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             data.pathInfos[node] = info
 
             return info
+        }
+
+        private fun log(message: Any?) {
+            if (logging) println(message)
         }
     }
 }
@@ -376,8 +482,8 @@ class UtilAnalysisPathInfo(
 
     override fun merge(other: UtilAnalysisPathInfo): UtilAnalysisPathInfo {
         return UtilAnalysisPathInfo(
-            callSiteUtilization.join(other.callSiteUtilization),
-            localRefUtilization.join(other.localRefUtilization)
+            callSiteUtilization.merge(other.callSiteUtilization),
+            localRefUtilization.merge(other.localRefUtilization)
         )
     }
 
@@ -389,7 +495,19 @@ class UtilAnalysisPathInfo(
 
     fun callSiteUtils() = callSiteUtilization.asIterable()
 
-    fun setValRefUtil(valRef: ValueRef, util: UtilLattice) {
+    fun meetValRefUtil(valRef: ValueRef?, util: UtilLattice) {
+        if (valRef == null) return
+
+        if (valRef is ValueRef.LocalRef) {
+            localRefUtilization.meetVal(valRef, util)
+        } else {
+            nonLocalUtilization.meetVal(valRef as ValueRef.NonLocalRef, util)
+        }
+    }
+
+    private fun setValRefUtil(valRef: ValueRef?, util: UtilLattice) {
+        if (valRef == null) return
+
         if (valRef is ValueRef.LocalRef) {
             localRefUtilization[valRef] = util
         } else {
@@ -404,6 +522,8 @@ class UtilAnalysisPathInfo(
             nonLocalUtilization.getWithDefault(valRef as ValueRef.NonLocalRef)
         }
     }
+
+    fun localUtils() = localRefUtilization.asIterable()
 
     fun nonLocalUtils() = nonLocalUtilization.asIterable()
 }
@@ -465,9 +585,6 @@ sealed interface ValueRef {
     }
 }
 
-//fun CFGNode<*>.toValueRef() = ValueRef.Node(this)
-fun FirExpression.toValueRef() = ValueRef.Expr(this)
-
 sealed class UtilLattice(private val value: Int): Lattice<UtilLattice>  {
     data object Top: UtilLattice(3)
     data object RT: UtilLattice(2)
@@ -479,6 +596,8 @@ sealed class UtilLattice(private val value: Int): Lattice<UtilLattice>  {
     fun geq(other: UtilLattice) = value >= other.value
 
     override fun join(other: UtilLattice) = if (this.geq(other)) this else other
+
+    override fun meet(other: UtilLattice) = if (this.geq(other)) other else this
 }
 
 // Function alias analysis
@@ -498,7 +617,7 @@ class FuncAnalysisPathInfo(
     private val variableValue: DefaultMapLat<FirBasedSymbol<*>, FuncRefValue> = DefaultMapLat(FuncRefValue.Bot),
 ) : IPathInfo<FuncAnalysisPathInfo> {
     override fun merge(other: FuncAnalysisPathInfo): FuncAnalysisPathInfo {
-        val mergedVarValue = variableValue.join(other.variableValue)
+        val mergedVarValue = variableValue.merge(other.variableValue)
         return FuncAnalysisPathInfo(mergedVarValue)
     }
 
@@ -541,14 +660,23 @@ fun<T: IPathInfo<T>> List<T>.mergeAll(mustCopy : Boolean = false) : T? {
 
 interface Lattice<T: Lattice<T>> {
     fun join(other: T): T
+    fun meet(other: T): T
 }
 
 class DefaultMapLat<K, V: Lattice<V>> private constructor (val defaultVal: V, private val _map: MutableMap<K, V>)
-    : MutableMap<K, V> by _map, Lattice<DefaultMapLat<K, V>>
+    : MutableMap<K, V> by _map
 {
     constructor(defaultVal: V) : this(defaultVal, mutableMapOf())
 
-    override fun join(other: DefaultMapLat<K, V>): DefaultMapLat<K, V> {
+    fun joinVal(key: K, withVal: V) {
+        this[key] = getWithDefault(key).join(withVal)
+    }
+
+    fun meetVal(key: K, withVal: V) {
+        this[key] = getWithDefault(key).meet(withVal)
+    }
+
+    fun merge(other: DefaultMapLat<K, V>): DefaultMapLat<K, V> {
         val combinedKeys = keys + other.keys
 
         val combined = DefaultMapLat<K, V>(defaultVal)
@@ -563,11 +691,11 @@ class DefaultMapLat<K, V: Lattice<V>> private constructor (val defaultVal: V, pr
         return combined
     }
 
-    fun getWithDefault(key: K?) = this[key] ?: defaultVal
-
     fun copy(): DefaultMapLat<K, V> {
         return DefaultMapLat(defaultVal, _map.toMutableMap())
     }
+
+    fun getWithDefault(key: K?) = this[key] ?: defaultVal
 }
 
 
@@ -611,6 +739,16 @@ sealed interface FuncRefValue : Lattice<FuncRefValue> {
         }
 
         return Top
+    }
+
+    override fun meet(other: FuncRefValue): FuncRefValue {
+        if (this.geq(other)) {
+            return other
+        } else if (this.leq(other)) {
+            return this
+        }
+
+        return Bot
     }
 }
 
