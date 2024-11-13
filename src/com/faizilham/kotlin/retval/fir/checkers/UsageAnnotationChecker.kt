@@ -1,6 +1,6 @@
 package com.faizilham.kotlin.retval.fir.checkers
 
-import com.faizilham.kotlin.retval.fir.Utils
+import com.faizilham.kotlin.retval.fir.checkers.commons.Utils
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind

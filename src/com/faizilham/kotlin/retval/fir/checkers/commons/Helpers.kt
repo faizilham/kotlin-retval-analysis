@@ -1,63 +1,56 @@
-package com.faizilham.kotlin.retval.fir
+package com.faizilham.kotlin.retval.fir.checkers.commons
 
 import com.faizilham.kotlin.retval.fir.attributes.usageObligation
-import org.jetbrains.kotlin.diagnostics.KtDiagnosticFactory0
-import org.jetbrains.kotlin.diagnostics.error0
-import org.jetbrains.kotlin.diagnostics.warning0
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.containingClassLookupTag
 import org.jetbrains.kotlin.fir.declarations.hasAnnotation
 import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
 import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
 import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
 import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
-import org.jetbrains.kotlin.fir.resolve.dfa.cfg.CFGNode
-import org.jetbrains.kotlin.fir.resolve.dfa.cfg.ControlFlowGraph
+import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.resolve.isInvoke
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.name.ClassId
-import org.jetbrains.kotlin.name.FqName
-import org.jetbrains.kotlin.name.Name
-import org.jetbrains.kotlin.psi.KtExpression
 
-object Utils {
-    object Constants {
-        /* Annotation class ids */
-        private val PACKAGE_FQN = FqName("com.faizilham.kotlin.retval.annotations")
-        val DiscardableClassId = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
-        val MustConsumeClassId = ClassId(PACKAGE_FQN, Name.identifier("MustConsume"))
-        val ConsumeClassId = ClassId(PACKAGE_FQN, Name.identifier("Consume"))
-        val SameUseClassId = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
+/* Control Flow Helpers */
 
-        val MayUseClassId = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
-        val AnyUseClassId = ClassId(PACKAGE_FQN, Name.identifier("AnyUse"))
-
-        val BuiltInDiscardable : Set<ClassId> = setOf(
-            ClassId.fromString("kotlin/contracts/CallsInPlace")
-        )
-    }
-
-    object Warnings {
-        /** Unused return value warning factory */
-        val UNUSED_RETURN_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
-        val UNUSED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
-        val UNCONSUMED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
-    }
-
-    object Errors {
-        val SAME_USE_INVALID_TARGET : KtDiagnosticFactory0 by error0<KtExpression>()
-        val SAME_USE_NOT_A_FUNCTION : KtDiagnosticFactory0 by error0<KtExpression>()
-        val SAME_USE_MISMATCH_RETURN_TYPE : KtDiagnosticFactory0 by error0<KtExpression>()
-        val CONSUME_NOT_MEMBER_OR_EXT : KtDiagnosticFactory0 by error0<KtExpression>()
-    }
-}
+fun ControlFlowGraph.isLambda() =
+    kind == ControlFlowGraph.Kind.AnonymousFunction ||
+            kind == ControlFlowGraph.Kind.AnonymousFunctionCalledInPlace
 
 fun CFGNode<*>.isInvalidNext(current: CFGNode<*>) = isDead || edgeFrom(current).kind.isBack
+
 fun CFGNode<*>.isInvalidPrev(current: CFGNode<*>) = isDead || edgeTo(current).kind.isBack
 
 fun CFGNode<*>.validNextSize() =
     this.followingNodes.asSequence().filterNot { it.isInvalidNext(this) }.count()
 
+
+fun CFGNode<*>.isReturnNode(): Boolean {
+    val nextIsExit = followingNodes.firstOrNull() is FunctionExitNode ||
+            followingNodes.lastOrNull() is FunctionExitNode
+
+    return  (this is JumpNode && nextIsExit) ||
+            (this is BlockExitNode && nextIsExit && owner.isLambda())
+}
+
+fun CFGNode<*>.isIndirectValueSource(): Boolean {
+    return  (this is JumpNode) ||
+            (this is BlockExitNode) ||
+            (this is WhenExitNode) ||
+            (this is WhenBranchResultExitNode) ||
+            (this is ElvisLhsExitNode) ||
+            (this is ElvisLhsIsNotNullNode) ||
+            (this is ElvisExitNode) ||
+            (this is BinaryAndExitLeftOperandNode) ||
+            (this is BinaryAndExitNode) ||
+            (this is BinaryOrExitLeftOperandNode) ||
+            (this is BinaryOrExitNode)
+}
+
+/* Fir Discardable and Utilization Helpers */
 
 fun FirFunctionCall.isDiscardable(session: FirSession) : Boolean {
     if (resolvedType.isDiscardable(session)) {
@@ -91,11 +84,33 @@ fun FirQualifiedAccessExpression.hasConsumeAnnotation(session: FirSession) : Boo
     return funcSymbol.hasAnnotation(Utils.Constants.ConsumeClassId, session)
 }
 
+fun FirQualifiedAccessExpression.getConsumedParameters() : Set<Int> {
+    val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return setOf()
+
+    return funcSymbol.valueParameterSymbols.asSequence()
+        .withIndex()
+        .filter { (_, it) ->
+            it.containsAnnotation(Utils.Constants.ConsumeClassId)
+        }
+        .map { (i, _) -> i}
+        .toSet()
+}
+
+
+/* Fir Common Helpers */
+
 fun FirBasedSymbol<*>.containsAnnotation(classId: ClassId) : Boolean {
     return resolvedAnnotationClassIds.contains(classId)
 }
 
 fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke() ?: false
+
+fun FirQualifiedAccessExpression.isClassMemberOrExtension() : Boolean {
+    return  resolvedType.isExtensionFunctionType ||
+            (calleeReference.toResolvedFunctionSymbol()?.containingClassLookupTag() != null)
+}
+
+/* Cone Type Helpers */
 
 fun ConeKotlinType.isDiscardable(session: FirSession) : Boolean {
     return  isUnitOrNullableUnit ||
@@ -118,7 +133,3 @@ fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : B
 fun isBuiltInDiscardable(classId: ClassId?) : Boolean {
     return classId != null && Utils.Constants.BuiltInDiscardable.contains(classId)
 }
-
-fun ControlFlowGraph.isLambda() =
-    kind == ControlFlowGraph.Kind.AnonymousFunction ||
-    kind == ControlFlowGraph.Kind.AnonymousFunctionCalledInPlace

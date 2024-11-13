@@ -1,5 +1,6 @@
-package com.faizilham.kotlin.retval.fir.checkers
+package com.faizilham.kotlin.retval.fir.checkers.old
 
+import com.faizilham.kotlin.retval.fir.checkers.analysis.FunctionInfo
 import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirValueParameter
@@ -46,31 +47,6 @@ class UtilizationData {
     }
 
     fun getVarOwner(variable: FirBasedSymbol<*>) = variableOwner[variable]
-}
-
-data class FunctionInfo(
-    val isLambda: Boolean,
-    val isClassMemberOrExtension: Boolean,
-    val returningConsumable : Boolean,
-    val returnIsConsumed : Boolean = false,
-    val consumingThis : Boolean = false,
-    val consumedParameters : Set<Int> = setOf(),
-    val consumedFreeVariables : Set<FirBasedSymbol<*>> = setOf()
-)
-
-fun FunctionInfo.convertThisToFirstParameter() : FunctionInfo {
-    val mappedParameters = consumedParameters.map { it + 1 }.toMutableSet()
-    if (consumingThis) mappedParameters.add(0)
-
-    return FunctionInfo(
-        isLambda,
-        isClassMemberOrExtension = false,
-        returningConsumable,
-        returnIsConsumed,
-        consumingThis,
-        consumedParameters = mappedParameters,
-        consumedFreeVariables
-    )
 }
 
 sealed class VarValue() {
