@@ -1,7 +1,7 @@
 package com.faizilham.kotlin.retval.fir
 
 import com.faizilham.kotlin.retval.fir.attributes.ConeUsageObligationAttribute
-import com.faizilham.kotlin.retval.fir.checkers.commons.Utils
+import com.faizilham.kotlin.retval.fir.checkers.commons.Commons
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.expressions.builder.buildAnnotation
@@ -20,8 +20,8 @@ class UsageObligationAttributeExtension(session: FirSession) : FirTypeAttributeE
     override fun convertAttributeToAnnotation(attribute: ConeAttribute<*>): FirAnnotation? {
         if (attribute !is ConeUsageObligationAttribute) return null
         val classId = when (attribute.usage) {
-            ConeUsageObligationAttribute.UsageObligation.MayUse -> Utils.Constants.MayUseClassId
-            ConeUsageObligationAttribute.UsageObligation.AnyUse -> Utils.Constants.AnyUseClassId
+            ConeUsageObligationAttribute.UsageObligation.MayUse -> Commons.Annotations.MayUse
+            ConeUsageObligationAttribute.UsageObligation.AnyUse -> Commons.Annotations.AnyUse
         }
         return buildAnnotation {
             annotationTypeRef = buildResolvedTypeRef {
@@ -37,8 +37,8 @@ class UsageObligationAttributeExtension(session: FirSession) : FirTypeAttributeE
 
     override fun extractAttributeFromAnnotation(annotation: FirAnnotation): ConeAttribute<*>? {
         val usage = when (annotation.annotationTypeRef.coneTypeOrNull?.classId) {
-            Utils.Constants.MayUseClassId -> ConeUsageObligationAttribute.UsageObligation.MayUse
-            Utils.Constants.AnyUseClassId -> ConeUsageObligationAttribute.UsageObligation.AnyUse
+            Commons.Annotations.MayUse -> ConeUsageObligationAttribute.UsageObligation.MayUse
+            Commons.Annotations.AnyUse -> ConeUsageObligationAttribute.UsageObligation.AnyUse
             else -> return null
         }
         return ConeUsageObligationAttribute.fromUsageObligation(usage)

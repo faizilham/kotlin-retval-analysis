@@ -33,7 +33,7 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common)  {
         analyzer.analyzeGraph(graph)
 
         for (fir in analyzer.getUnutilizedCreations()) {
-            reporter.reportOn(fir.source, Utils.Warnings.UNCONSUMED_VALUE, context)
+            reporter.reportOn(fir.source, Commons.Warnings.UNCONSUMED_VALUE, context)
         }
     }
 

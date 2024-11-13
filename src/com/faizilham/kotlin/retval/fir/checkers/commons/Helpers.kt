@@ -75,13 +75,13 @@ fun FirCallableReferenceAccess.getReturnType() : ConeKotlinType? {
 fun FirQualifiedAccessExpression.hasDiscardableAnnotation(session: FirSession) : Boolean {
     val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return false
 
-    return funcSymbol.hasAnnotation(Utils.Constants.DiscardableClassId, session)
+    return funcSymbol.hasAnnotation(Commons.Annotations.Discardable, session)
 }
 
 fun FirQualifiedAccessExpression.hasConsumeAnnotation(session: FirSession) : Boolean {
     val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return false
 
-    return funcSymbol.hasAnnotation(Utils.Constants.ConsumeClassId, session)
+    return funcSymbol.hasAnnotation(Commons.Annotations.Consume, session)
 }
 
 fun FirQualifiedAccessExpression.getConsumedParameters() : Set<Int> {
@@ -90,7 +90,7 @@ fun FirQualifiedAccessExpression.getConsumedParameters() : Set<Int> {
     return funcSymbol.valueParameterSymbols.asSequence()
         .withIndex()
         .filter { (_, it) ->
-            it.containsAnnotation(Utils.Constants.ConsumeClassId)
+            it.containsAnnotation(Commons.Annotations.Consume)
         }
         .map { (i, _) -> i}
         .toSet()
@@ -120,10 +120,10 @@ fun ConeKotlinType.isDiscardable(session: FirSession) : Boolean {
 }
 
 fun ConeKotlinType.hasDiscardableAnnotation(session: FirSession) =
-    hasClassAnnotation(session, Utils.Constants.DiscardableClassId)
+    hasClassAnnotation(session, Commons.Annotations.Discardable)
 
 fun ConeKotlinType.hasMustConsumeAnnotation(session: FirSession) =
-    hasClassAnnotation(session, Utils.Constants.MustConsumeClassId)
+    hasClassAnnotation(session, Commons.Annotations.MustConsume)
 
 fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : Boolean{
     val regularClassSymbol = toRegularClassSymbol(session) ?: return false
@@ -131,5 +131,5 @@ fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : B
 }
 
 fun isBuiltInDiscardable(classId: ClassId?) : Boolean {
-    return classId != null && Utils.Constants.BuiltInDiscardable.contains(classId)
+    return classId != null && Commons.BuiltInDiscardableTypes.contains(classId)
 }

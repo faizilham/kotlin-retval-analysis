@@ -41,10 +41,10 @@ object UsageFlowChecker : FirControlFlowChecker(MppCheckerKind.Common) {
     private fun reportUnused(src: UnusedSource, reporter: DiagnosticReporter, context: CheckerContext) {
         when(src) {
             is UnusedSource.AtomicExpr -> {
-                reporter.reportOn(src.node.fir.source, Utils.Warnings.UNUSED_VALUE, context)
+                reporter.reportOn(src.node.fir.source, Commons.Warnings.UNUSED_VALUE, context)
             }
             is UnusedSource.FuncCall -> {
-                reporter.reportOn(src.node.fir.source, Utils.Warnings.UNUSED_RETURN_VALUE , context)
+                reporter.reportOn(src.node.fir.source, Commons.Warnings.UNUSED_RETURN_VALUE , context)
             }
             is UnusedSource.Indirect -> src.sources.forEach { reportUnused(it, reporter, context) }
         }
@@ -390,7 +390,7 @@ private fun FirFunctionCall.getSameUseArguments() : List<FirExpression> {
     return funcSymbol.valueParameterSymbols.asSequence()
         .withIndex()
         .filter { (_, it) ->
-            it.containsAnnotation(Utils.Constants.SameUseClassId)
+            it.containsAnnotation(Commons.Annotations.SameUse)
         }
         .mapNotNull { (i, _) -> argumentList.arguments.getOrNull(i)}
         .toList()

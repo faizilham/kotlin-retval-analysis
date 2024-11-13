@@ -8,22 +8,22 @@ import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtExpression
 
-object Utils {
-    object Constants {
+object Commons {
+    object Annotations {
         /* Annotation class ids */
         private val PACKAGE_FQN = FqName("com.faizilham.kotlin.retval.annotations")
-        val DiscardableClassId = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
-        val MustConsumeClassId = ClassId(PACKAGE_FQN, Name.identifier("MustConsume"))
-        val ConsumeClassId = ClassId(PACKAGE_FQN, Name.identifier("Consume"))
-        val SameUseClassId = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
+        val Discardable = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
+        val MustConsume = ClassId(PACKAGE_FQN, Name.identifier("MustConsume"))
+        val Consume = ClassId(PACKAGE_FQN, Name.identifier("Consume"))
+        val SameUse = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
 
-        val MayUseClassId = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
-        val AnyUseClassId = ClassId(PACKAGE_FQN, Name.identifier("AnyUse"))
-
-        val BuiltInDiscardable: Set<ClassId> = setOf(
-            ClassId.fromString("kotlin/contracts/CallsInPlace")
-        )
+        val MayUse = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
+        val AnyUse = ClassId(PACKAGE_FQN, Name.identifier("AnyUse"))
     }
+
+    val BuiltInDiscardableTypes: Set<ClassId> = setOf(
+        ClassId.fromString("kotlin/contracts/CallsInPlace")
+    )
 
     object Warnings {
         /** Unused return value warning factory */

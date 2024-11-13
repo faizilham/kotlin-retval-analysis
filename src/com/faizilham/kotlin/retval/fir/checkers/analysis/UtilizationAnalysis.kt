@@ -35,7 +35,7 @@ class UtilizationAnalysis(
 
     fun report(reporter: DiagnosticReporter) {
         for (warnedFir in warnings) {
-            reporter.reportOn(warnedFir.source, Utils.Warnings.UNCONSUMED_VALUE, context)
+            reporter.reportOn(warnedFir.source, Commons.Warnings.UNCONSUMED_VALUE, context)
         }
     }
 

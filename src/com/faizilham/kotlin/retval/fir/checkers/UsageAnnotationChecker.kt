@@ -1,6 +1,6 @@
 package com.faizilham.kotlin.retval.fir.checkers
 
-import com.faizilham.kotlin.retval.fir.checkers.commons.Utils
+import com.faizilham.kotlin.retval.fir.checkers.commons.Commons
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.analysis.checkers.MppCheckerKind
@@ -22,8 +22,8 @@ object SameUseAnnotationChecker : FirAnnotationChecker(MppCheckerKind.Common) {
         val annotationId = expression.toAnnotationClassId(context.session)
 
         when (annotationId) {
-            Utils.Constants.SameUseClassId -> checkSameUseAnnotations(context, reporter)
-            Utils.Constants.ConsumeClassId -> checkConsumeAnnotations(context, reporter)
+            Commons.Annotations.SameUse -> checkSameUseAnnotations(context, reporter)
+            Commons.Annotations.Consume -> checkConsumeAnnotations(context, reporter)
         }
     }
 
@@ -32,19 +32,19 @@ object SameUseAnnotationChecker : FirAnnotationChecker(MppCheckerKind.Common) {
 
         val annotationTarget = context.containingDeclarations.last()
         val param = annotationTarget as? FirValueParameter
-            ?: return reporter.reportOn(annotationTarget.source, Utils.Errors.SAME_USE_INVALID_TARGET, context)
+            ?: return reporter.reportOn(annotationTarget.source, Commons.Errors.SAME_USE_INVALID_TARGET, context)
 
         val paramType = param.returnTypeRef.coneType
 
         if (!paramType.isSomeFunctionType(session)) {
-            reporter.reportOn(param.source, Utils.Errors.SAME_USE_NOT_A_FUNCTION, context)
+            reporter.reportOn(param.source, Commons.Errors.SAME_USE_NOT_A_FUNCTION, context)
             return
         }
 
         val funcRetType = param.containingFunctionSymbol.resolvedReturnType
 
         if (!paramType.returnType(session).isSubtypeOf(funcRetType, session)) {
-            reporter.reportOn(param.source, Utils.Errors.SAME_USE_MISMATCH_RETURN_TYPE, context)
+            reporter.reportOn(param.source, Commons.Errors.SAME_USE_MISMATCH_RETURN_TYPE, context)
         }
     }
 
@@ -57,7 +57,7 @@ object SameUseAnnotationChecker : FirAnnotationChecker(MppCheckerKind.Common) {
         val isMemberFunction = targetFunc.getContainingClass(session) != null
 
         if (!isMemberFunction && !targetFunc.isExtension) {
-            reporter.reportOn(targetFunc.symbol.source, Utils.Errors.CONSUME_NOT_MEMBER_OR_EXT, context)
+            reporter.reportOn(targetFunc.symbol.source, Commons.Errors.CONSUME_NOT_MEMBER_OR_EXT, context)
         }
     }
 }
