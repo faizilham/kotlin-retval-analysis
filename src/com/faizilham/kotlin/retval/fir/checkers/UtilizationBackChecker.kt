@@ -30,12 +30,10 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
         }
 
 //        val logging = context.containingFile?.name == "consuming.kt" && graph.name == "insideNoCrossover"
-        var logging = false
+        val logging = false
         val funcAnalyzer = FuncAnalysis(context, logging)
 
         funcAnalyzer.analyzeGraph(graph)
-
-        logging = context.containingFile?.name == "consuming.kt" && graph.name == "simple"
 
         val utilAnalyzer = UtilAnalysis(context, funcAnalyzer.data, logging)
 
@@ -63,12 +61,7 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
                 is FunctionEnterNode -> handleFunctionStart(node)
                 is VariableDeclarationNode -> handleVarDecl(node, info)
                 is VariableAssignmentNode -> handleVarAssign(node, info)
-//                is FunctionExitNode -> {
-//                    log("Exit ${node.owner.name}")
-//                    for ((sym, ref) in info.variableValue) {
-//                        log("$sym -> $ref")
-//                    }
-//                }
+
                 else -> {}
             }
         }
@@ -165,42 +158,21 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             when {
                 node is FunctionEnterNode -> handleFunctionStart(node, info)
                 node is FunctionCallNode -> handleFuncCallNode(node, info)
-//                node is QualifiedAccessNode -> handleQualifiedAccess(node, info)
                 node is VariableDeclarationNode -> handleVariableDeclaration(node, info)
-//                node is VariableAssignmentNode -> handleVarAssign(node, info)
+                node is VariableAssignmentNode -> handleVariableAssign(node, info)
 
                 node.isReturnNode() -> handleReturnNode(node, info)
                 node.isIndirectValueSource() -> handleIndirectValueSource(node, info)
             }
-
-            if (logging && (node is WhenEnterNode || node is WhenExitNode)) {
-                log("---branch log---")
-
-                for ((loc, util) in info.localUtils()) {
-                    when(loc) {
-                        is ValueRef.LocalVar -> { log("var ${loc.symbol} ut $util")}
-                        is ValueRef.Expr -> {} // { log("expr $loc ut ${util.value}")}
-                    }
-                }
-                log("--- end branch log ---")
-
-            }
         }
+
+        // function start
 
         private fun handleFunctionStart(node: FunctionEnterNode, info: UtilAnalysisPathInfo) {
             // Warnings
             for ((call, util) in info.callSiteUtils()) {
                 if (!util.leq(UtilLattice.RT)) {
                     warnings.add(call)
-                }
-            }
-
-            if (logging) {
-                for ((loc, util) in info.localUtils()) {
-                    when(loc) {
-                        is ValueRef.LocalVar -> { log("var ${loc.symbol} ut $util")}
-                        is ValueRef.Expr -> {} // { log("expr $loc ut ${util.value}")}
-                    }
                 }
             }
 
@@ -246,16 +218,15 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
         private fun handleFuncCallNode(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
             val funcInfo = getFunctionInfo(node) ?: return
 
+            if (isIrrelevantFunc(funcInfo)) return
+
             consumeReceiver(node, info, funcInfo)
             consumeParameters(node, info, funcInfo)
             consumeFreeVariables(node, info, funcInfo)
 
-
             if (funcInfo.returningConsumable && !funcInfo.returnIsConsumed) {
                 val callExprRef = getExprValueRef(node.fir, node) ?: return
                 val util = info.getValRefUtil(callExprRef)
-
-                log("SetCallSite ${node.fir.hashCode()} ut $util")
 
                 info.setCallSiteUtil(node.fir, util)
             }
@@ -263,15 +234,18 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
 
         private fun consumeReceiver(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
             if (!funcInfo.consumingThis) return
-            val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
 
-            info.meetValRefUtil(getExprValueRef(receiver, node), UtilLattice.UT)
+            val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
+            val receiverRef = getExprValueRef(receiver, node) ?: return
+
+            info.meetValRefUtil(receiverRef, UtilLattice.UT)
         }
 
         private fun consumeParameters(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
             for (consumedId in funcInfo.consumedParameters) {
                 val arg = node.fir.argumentList.arguments.getOrNull(consumedId) ?: continue
-                info.meetValRefUtil(getExprValueRef(arg, node), UtilLattice.UT)
+                val argRef = getExprValueRef(arg, node) ?: continue
+                info.meetValRefUtil(argRef, UtilLattice.UT)
             }
         }
 
@@ -280,6 +254,14 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
                 val valRef = getVarValueRef(freeVar, node) ?: continue
                 info.meetValRefUtil(valRef, UtilLattice.UT)
             }
+        }
+
+        // function info helpers
+        private fun isIrrelevantFunc(func: FunctionInfo) : Boolean {
+            return  !func.returningConsumable &&
+                    !func.consumingThis &&
+                    func.consumedParameters.isEmpty() &&
+                    func.consumedFreeVariables.isEmpty()
         }
 
         private fun getFunctionInfo(node: FunctionCallNode) : FunctionInfo? {
@@ -332,7 +314,7 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             }
         }
 
-        // variable & qualified access
+        // variable assignment nodes
 
         private fun handleVariableDeclaration(node: VariableDeclarationNode, info: UtilAnalysisPathInfo) {
             val varType = node.fir.returnTypeRef.coneType
@@ -342,34 +324,28 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
 
             val initValRef = getExprValueRef(node.fir.initializer, node) ?: return
 
-            log("VarDecl ${node.fir.symbol} ${node.fir.initializer?.hashCode()} $varUtilization")
-
             info.meetValRefUtil(initValRef, varUtilization)
         }
 
-//        private fun handleQualifiedAccess(node: QualifiedAccessNode, info: UtilAnalysisPathInfo) {
-//            val varType = node.fir.resolvedType
-//            if (!varType.hasMustConsumeAnnotation(context.session)) return
-//
-//            val utilization = info.getValRefUtil(node.fir.toValueRef())
-//
-//            val valRef =
-//                if (node.fir.calleeReference is FirThisReference) {
-//                    ValueRef.ThisRef
-//                } else {
-//                    val symbol = node.fir.calleeReference.symbol ?: return
-//                    log("QUA var $symbol ${utilization.value}")
-//
-//                    getVarValueRef(symbol, node) ?: return
-//                }
-//
-//
-//            info.setValRefUtil(valRef, utilization)
-//        }
+        private fun handleVariableAssign(node: VariableAssignmentNode, info: UtilAnalysisPathInfo) {
+            val varType = node.fir.lValue.resolvedType
+            if (!varType.hasMustConsumeAnnotation(context.session)) return
+
+            val varSymbol = node.fir.calleeReference?.symbol ?: return
+            val varRef = getVarValueRef(varSymbol, node) ?: return
+            val varUtilization = info.getValRefUtil(varRef)
+
+            val assignmentExprRef = getExprValueRef(node.fir.rValue, node) ?: return
+
+            info.meetValRefUtil(assignmentExprRef, varUtilization)
+
+            info.resetValRefUtil(varRef)
+        }
+
+        // control flow nodes
 
         private fun handleReturnNode(node: CFGNode<*>, info: UtilAnalysisPathInfo) {
             val retTarget = node.firstPreviousNode.fir
-
             if (retTarget !is FirExpression) return
 
             info.meetValRefUtil(getExprValueRef(retTarget, node), UtilLattice.RT)
@@ -379,18 +355,15 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             val valRef = getValueRefFromNode(node) ?: return
 
             val util = info.getValRefUtil(valRef)
-//            if (util == UtilLattice.Top) return
-
-            log("Ind $node ${valRef.hashCode()} $util ${node.previousNodes.size}")
+            if (util == UtilLattice.Top) return   // optimization: ValueRef is Top default
 
             for (prev in node.previousNodes) {
                 val prevRef = getValueRefFromNode(prev) ?: continue
-
-//                log("Ind prev $prev ${prevRef.hashCode()}")
-
                 info.meetValRefUtil(prevRef, util)
             }
         }
+
+        // valueref helpers
 
         private fun getValueRefFromNode(node: CFGNode<*>) : ValueRef? {
             val fir = node.fir
@@ -438,7 +411,7 @@ object UtilizationBackChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             return ValueRef.LocalVar(symbol)
         }
 
-        //
+        // path info helpers
         private fun propagatePathInfo(node: CFGNode<*>) : UtilAnalysisPathInfo {
             if (node is FunctionExitNode)
                 return UtilAnalysisPathInfo()
@@ -468,22 +441,31 @@ class UtilAnalysisData {
     val lambdaFuncInfos: MutableMap<FirAnonymousFunction, FunctionInfo> = mutableMapOf()
 }
 
-class UtilAnalysisPathInfo(
-    private val callSiteUtilization: DefaultMapLat<FirFunctionCall, UtilLattice> = DefaultMapLat(UtilLattice.Bot),
-    private val localRefUtilization: DefaultMapLat<ValueRef.LocalRef, UtilLattice> = DefaultMapLat(UtilLattice.Top),
-    private val nonLocalUtilization: DefaultMapLat<ValueRef.NonLocalRef, UtilLattice> = DefaultMapLat(UtilLattice.Top)
+class UtilAnalysisPathInfo private constructor(
+    private val callSiteUtilization: DefaultMapLat<FirFunctionCall, UtilLattice>,
+    private val localRefUtilization: DefaultMapLat<ValueRef.LocalRef, UtilLattice>,
+    private val nonLocalUtilization: DefaultMapLat<ValueRef.NonLocalRef, UtilLattice>
 ) : IPathInfo<UtilAnalysisPathInfo> {
+
+    constructor() : this(
+        DefaultMapLat(UtilLattice.Bot),
+        DefaultMapLat(UtilLattice.Top),
+        DefaultMapLat(UtilLattice.Top)
+    )
+
     override fun copy(): UtilAnalysisPathInfo {
         return UtilAnalysisPathInfo(
             callSiteUtilization.copy(),
-            localRefUtilization.copy()
+            localRefUtilization.copy(),
+            nonLocalUtilization.copy()
         )
     }
 
     override fun merge(other: UtilAnalysisPathInfo): UtilAnalysisPathInfo {
         return UtilAnalysisPathInfo(
             callSiteUtilization.merge(other.callSiteUtilization),
-            localRefUtilization.merge(other.localRefUtilization)
+            localRefUtilization.merge(other.localRefUtilization),
+            nonLocalUtilization.merge(other.nonLocalUtilization)
         )
     }
 
@@ -505,13 +487,13 @@ class UtilAnalysisPathInfo(
         }
     }
 
-    private fun setValRefUtil(valRef: ValueRef?, util: UtilLattice) {
+    fun resetValRefUtil(valRef: ValueRef?) {
         if (valRef == null) return
 
         if (valRef is ValueRef.LocalRef) {
-            localRefUtilization[valRef] = util
+            localRefUtilization.remove(valRef)
         } else {
-            nonLocalUtilization[valRef as ValueRef.NonLocalRef] = util
+            nonLocalUtilization.remove(valRef as ValueRef.NonLocalRef)
         }
     }
 
@@ -532,57 +514,12 @@ sealed interface ValueRef {
     sealed interface LocalRef : ValueRef
     sealed interface NonLocalRef : ValueRef
 
-//    class Node(val node: CFGNode<*>) : LocalRef {
-//        override fun equals(other: Any?): Boolean {
-//            return other is Node && node == other.node
-//        }
-//
-//        override fun hashCode(): Int {
-//            return node.hashCode()
-//        }
-//    }
-
-    class Expr(val fir: FirExpression) : LocalRef {
-        override fun equals(other: Any?): Boolean {
-            return other is Expr && fir == other.fir
-        }
-
-        override fun hashCode(): Int {
-            return fir.hashCode()
-        }
-    }
-
-    class LocalVar(val symbol: FirBasedSymbol<*>): LocalRef {
-        override fun equals(other: Any?): Boolean {
-            return other is LocalVar && symbol == other.symbol
-        }
-
-        override fun hashCode(): Int {
-            return symbol.hashCode()
-        }
-    }
+    data class Expr(val fir: FirExpression) : LocalRef
+    data class LocalVar(val symbol: FirBasedSymbol<*>): LocalRef
 
     data object ThisRef : NonLocalRef
-
-    class Params(val symbol: FirBasedSymbol<*>, val index: Int): NonLocalRef {
-        override fun equals(other: Any?): Boolean {
-            return other is LocalVar && symbol == other.symbol
-        }
-
-        override fun hashCode(): Int {
-            return symbol.hashCode()
-        }
-    }
-
-    class FreeVar(val symbol: FirBasedSymbol<*>): NonLocalRef {
-        override fun equals(other: Any?): Boolean {
-            return other is FreeVar && symbol == other.symbol
-        }
-
-        override fun hashCode(): Int {
-            return symbol.hashCode()
-        }
-    }
+    data class Params(val symbol: FirBasedSymbol<*>, val index: Int): NonLocalRef
+    data class FreeVar(val symbol: FirBasedSymbol<*>): NonLocalRef
 }
 
 sealed class UtilLattice(private val value: Int): Lattice<UtilLattice>  {
@@ -701,27 +638,9 @@ class DefaultMapLat<K, V: Lattice<V>> private constructor (val defaultVal: V, pr
 
 sealed interface FuncRefValue : Lattice<FuncRefValue> {
     data object Top : FuncRefValue
+    data class LambdaRef(val lambda: FirAnonymousFunction) : FuncRefValue
+    data class CallableRef(val ref: FirCallableReferenceAccess) : FuncRefValue
     data object Bot : FuncRefValue
-
-    class LambdaRef(val lambda: FirAnonymousFunction) : FuncRefValue {
-        override fun equals(other: Any?): Boolean {
-            return (other is LambdaRef) && lambda == other.lambda
-        }
-
-        override fun hashCode(): Int {
-            return lambda.hashCode()
-        }
-    }
-
-    class CallableRef(val ref: FirCallableReferenceAccess) : FuncRefValue {
-        override fun equals(other: Any?): Boolean {
-            return (other is CallableRef) && ref == other.ref
-        }
-
-        override fun hashCode(): Int {
-            return ref.hashCode()
-        }
-    }
 
     fun leq(other: FuncRefValue): Boolean {
         return this == Bot || other == Top || this == other
@@ -775,7 +694,6 @@ private fun CFGNode<*>.isIndirectValueSource(): Boolean {
             (this is BinaryOrExitLeftOperandNode) ||
             (this is BinaryOrExitNode)
 }
-
 
 private fun FirQualifiedAccessExpression.getConsumedParameters() : Set<Int> {
     val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return setOf()
