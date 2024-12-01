@@ -15,8 +15,8 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             return
         }
 
-//        val logging = context.containingFile?.name == "consuming.kt" && graph.name == "insideNoCrossover"
-        val logging = false
+        val logging = context.containingFile?.name == "consuming.kt" && graph.name == "indirectLambda2"
+//        val logging = false
 
         val funcAnalyzer = FuncAliasAnalysis(context, logging)
         funcAnalyzer.analyzeGraph(graph)

@@ -49,6 +49,7 @@ fun simple() {
 
     val task4 = if (1 == 2) <!UNCONSUMED_VALUE!>DummyDeferred(block2)<!> else task
     val task5 = if (3 == 4) DummyDeferred(block2) else DummyDeferred(block3)
+    val task6 = if (5 == 6) DummyDeferred(block3) else task2
 
     task.delay()
     task2.delay()
@@ -66,6 +67,8 @@ fun simple() {
     } else {
         stopWithParam(task5)
     }
+
+    task6.cancel()
 
     val result = task.await()
 }
@@ -100,7 +103,7 @@ fun insideLambda() {
     }
 }
 
-fun lateInitialization() {
+fun lateInit() {
     val block = { 1 }
 
     val task : DummyDeferred<Int>;
@@ -112,8 +115,29 @@ fun lateInitialization() {
     }
 
     val result = task.await()
+}
 
-    // TODO: add var test
+fun lateInit2() {
+    val block = { 1 }
+
+    var task : DummyDeferred<Int>
+    var result : Int?
+
+    if (1 == 1) {
+        task = DummyDeferred(block)
+    } else {
+        task = DummyDeferred(block)
+    }
+
+    result = task.await()
+
+    task = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+
+    if (1 == 2) {
+        task = DummyDeferred(block)
+    }
+
+    result = task.await()
 }
 
 fun paramConsumingLambda() {

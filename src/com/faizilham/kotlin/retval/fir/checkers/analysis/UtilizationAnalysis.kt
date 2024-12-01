@@ -13,8 +13,10 @@ import org.jetbrains.kotlin.fir.references.symbol
 import org.jetbrains.kotlin.fir.references.toResolvedCallableSymbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.resolvedType
+import org.jetbrains.kotlin.utils.SmartSet
 
 class UtilizationAnalysis(
     private val context: CheckerContext,
@@ -26,10 +28,9 @@ class UtilizationAnalysis(
     private val warnings: MutableList<FirElement> = mutableListOf()
 
     fun analyzeGraph(graph: ControlFlowGraph) {
-        graph.subGraphs.forEach { analyzeGraph(it) }
-
-        for (node in graph.nodes.asReversed()) {
+        for (node in graph.nodes) {
             analyzeNode(node)
+            (node as? CFGNodeWithSubgraphs<*>)?.subGraphs?.forEach { analyzeGraph(it) }
         }
     }
 
@@ -43,23 +44,21 @@ class UtilizationAnalysis(
         val info = propagatePathInfo(node)
 
         when {
-            node is FunctionEnterNode -> handleFunctionStart(node, info)
-            node is FunctionCallNode -> handleFuncCallNode(node, info)
-            node is VariableDeclarationNode -> handleVariableDeclaration(node, info)
-            node is VariableAssignmentNode -> handleVariableAssign(node, info)
-
+            node is FunctionExitNode -> handleFuncExit(node, info)
+            node is FunctionCallNode -> handleFuncCall(node, info)
+            node is VariableDeclarationNode -> handleVarDeclaration(node, info)
+            node is VariableAssignmentNode -> handleVarAssignment(node, info)
             node.isReturnNode() -> handleReturnNode(node, info)
             node.isIndirectValueSource() -> handleIndirectValueSource(node, info)
         }
     }
 
-    // function start related
-
-    private fun handleFunctionStart(node: FunctionEnterNode, info: UtilAnalysisPathInfo) {
+    /* Function Exit */
+    private fun handleFuncExit(node: FunctionExitNode, info: UtilAnalysisPathInfo) {
         // Warnings
-        for ((call, util) in info.callSiteUtils()) {
+        for ((call, util) in info.callSiteUtils) {
             if (!util.leq(UtilLattice.RT)) {
-                warnings.add(call)
+                warnings.add(call.fir)
             }
         }
 
@@ -76,13 +75,13 @@ class UtilizationAnalysis(
         val consumedParameters = mutableSetOf<Int>()
         val consumedFreeVariables = mutableSetOf<FirBasedSymbol<*>>()
 
-        for ((nonlocal, utilization) in info.nonLocalUtils()) {
+        for ((nonlocal, utilization) in info.nonLocalUtils) {
             if (!utilization.leq(UtilLattice.UT)) continue
 
             when (nonlocal) {
-                is ValueRef.ThisRef -> consumingThis = true
-                is ValueRef.Params -> consumedParameters.add(nonlocal.index)
-                is ValueRef.FreeVar -> consumedFreeVariables.add(nonlocal.symbol)
+                is ValueSource.ThisRef -> consumingThis = true
+                is ValueSource.Params -> consumedParameters.add(nonlocal.index)
+                is ValueSource.FreeVar -> consumedFreeVariables.add(nonlocal.symbol)
             }
         }
 
@@ -100,11 +99,10 @@ class UtilizationAnalysis(
         )
     }
 
-    // function call related
+    /* Function Call */
 
-    private fun handleFuncCallNode(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
+    private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
         val funcInfo = getFunctionInfo(node) ?: return
-
         if (funcInfo.hasNoEffect()) return
 
         consumeReceiver(node, info, funcInfo)
@@ -112,10 +110,8 @@ class UtilizationAnalysis(
         consumeFreeVariables(node, info, funcInfo)
 
         if (funcInfo.returningConsumable && !funcInfo.returnIsConsumed) {
-            val callExprRef = getExprValueRef(node.fir, node) ?: return
-            val util = info.getValRefUtil(callExprRef)
-
-            info.setCallSiteUtil(node.fir, util)
+            val source = ValueSource.CallSite(node.fir)
+            info.callSiteUtils[source] = UtilLattice.Top
         }
     }
 
@@ -123,25 +119,38 @@ class UtilizationAnalysis(
         if (!funcInfo.consumingThis) return
 
         val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
-        val receiverRef = getExprValueRef(receiver, node) ?: return
+        val resolvedReceiver = resolve(receiver, node, info, true)
 
-        info.meetValRefUtil(receiverRef, UtilLattice.UT)
+        markUtilized(resolvedReceiver, info)
     }
 
     private fun consumeParameters(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
         for (consumedId in funcInfo.consumedParameters) {
             val arg = node.fir.argumentList.arguments.getOrNull(consumedId) ?: continue
-            val argRef = getExprValueRef(arg, node) ?: continue
-            info.meetValRefUtil(argRef, UtilLattice.UT)
+            val argSources = resolve(arg, node, info, true)
+
+            markUtilized(argSources, info)
         }
     }
 
     private fun consumeFreeVariables(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
         for (freeVar in funcInfo.consumedFreeVariables) {
-            val valRef = getVarValueRef(freeVar, node) ?: continue
-            info.meetValRefUtil(valRef, UtilLattice.UT)
+            val sources = resolveVar(freeVar, node, info, true)
+            markUtilized(sources, info)
         }
     }
+
+    private fun markUtilized(valueSources: SetLat<ValueSource>, info: UtilAnalysisPathInfo) {
+        for (source in valueSources) {
+            when(source) {
+                is ValueSource.NonLocalSource -> info.nonLocalUtils.meetVal(source, UtilLattice.UT)
+                is ValueSource.CallSite -> info.callSiteUtils.meetVal(source, UtilLattice.UT)
+                is ValueSource.TransientVar -> {}
+            }
+        }
+    }
+
+    // Function Info Resolving
 
     private fun getFunctionInfo(node: FunctionCallNode) : FunctionInfo? {
         val fir = node.fir
@@ -150,7 +159,7 @@ class UtilizationAnalysis(
         return FunctionInfo(
             isLambda = false,
             isClassMemberOrExtension = fir.isClassMemberOrExtension(),
-            returningConsumable = fir.resolvedType.hasMustConsumeAnnotation(context.session),
+            returningConsumable = isUtilizableType(fir.resolvedType),
             returnIsConsumed = fir.hasDiscardableAnnotation(context.session),
             consumingThis = fir.hasConsumeAnnotation(context.session),
             consumedParameters = fir.getConsumedParameters()
@@ -183,7 +192,7 @@ class UtilizationAnalysis(
                 FunctionInfo(
                     isLambda = false,
                     isClassMemberOrExtension = ref.isClassMemberOrExtension(),
-                    returningConsumable = returnType.hasMustConsumeAnnotation(context.session),
+                    returningConsumable = isUtilizableType(returnType),
                     returnIsConsumed = ref.hasDiscardableAnnotation(context.session),
                     consumingThis = ref.hasConsumeAnnotation(context.session),
                     consumedParameters = ref.getConsumedParameters()
@@ -193,110 +202,162 @@ class UtilizationAnalysis(
         }
     }
 
-    // variable assignment nodes related
+    /* Variable aliasing */
 
-    private fun handleVariableDeclaration(node: VariableDeclarationNode, info: UtilAnalysisPathInfo) {
+    private fun handleVarDeclaration(node: VariableDeclarationNode, info: UtilAnalysisPathInfo) {
         val varType = node.fir.returnTypeRef.coneType
-        if (!varType.hasMustConsumeAnnotation(context.session)) return
+        if (!isUtilizableType(varType)) return
 
-        val varUtilization = getVarValueRef(node.fir.symbol, node)?.let { info.getValRefUtil(it) } ?: return
+        val varRef = ValueRef.Variable(node.fir.symbol, VariableRecord(node.owner, true))
 
-        val initValRef = getExprValueRef(node.fir.initializer, node) ?: return
-
-        info.meetValRefUtil(initValRef, varUtilization)
+        info.reachingValues[varRef] = resolve(node.fir.initializer, node, info, false)
     }
 
-    private fun handleVariableAssign(node: VariableAssignmentNode, info: UtilAnalysisPathInfo) {
+    private fun handleVarAssignment(node: VariableAssignmentNode, info: UtilAnalysisPathInfo) {
         val varType = node.fir.lValue.resolvedType
-        if (!varType.hasMustConsumeAnnotation(context.session)) return
+        if (!isUtilizableType(varType)) return
 
-        val varSymbol = node.fir.calleeReference?.symbol ?: return
-        val varRef = getVarValueRef(varSymbol, node) ?: return
-        val varUtilization = info.getValRefUtil(varRef)
+        val symbol = node.fir.calleeReference?.symbol ?: return
+        val record = funcData.variableRecords[symbol] ?: return
 
-        val assignmentExprRef = getExprValueRef(node.fir.rValue, node) ?: return
+        val varRef = ValueRef.Variable(symbol, record)
 
-        info.meetValRefUtil(assignmentExprRef, varUtilization)
-
-        info.resetValRefUtil(varRef)
+        info.occludedSources[varRef] = getOccluded(info.reachingValues[varRef])
+        info.reachingValues[varRef] = resolve(node.fir.rValue, node, info, false)
     }
 
-    // control flow nodes related
+    /* returns and other nodes */
 
     private fun handleReturnNode(node: CFGNode<*>, info: UtilAnalysisPathInfo) {
         val retTarget = node.firstPreviousNode.fir
         if (retTarget !is FirExpression) return
 
-        info.meetValRefUtil(getExprValueRef(retTarget, node), UtilLattice.RT)
+        val resolvedTargets = resolve(retTarget, node, info, true)
+
+        for (source in resolvedTargets) {
+            if (source is ValueSource.CallSite) {
+                info.callSiteUtils.meetVal(source, UtilLattice.UT)
+            }
+        }
     }
 
     private fun handleIndirectValueSource(node: CFGNode<*>, info: UtilAnalysisPathInfo) {
-        val valRef = getValueRefFromNode(node) ?: return
+        val firExpr = when(val fir = node.fir) {
+            is FirExpression -> fir
+            is FirWhenBranch -> fir.result
+            else -> return
+        }
 
-        val util = info.getValRefUtil(valRef)
-        if (util == UtilLattice.Top) return   // optimization: ValueRef is Top default
+        if (!isUtilizableType(firExpr.resolvedType)) return
+
+        val combined = SmartSet.create<ValueSource>()
 
         for (prev in node.previousNodes) {
-            val prevRef = getValueRefFromNode(prev) ?: continue
-            info.meetValRefUtil(prevRef, util)
+            val prevSources = resolveNode(prev, info, false)
+            combined.addAll(prevSources)
+        }
+
+        info.reachingValues[ValueRef.Expr(firExpr)] = SetLat.from(combined)
+    }
+
+
+    // resolving
+
+    private fun resolveNode(node: CFGNode<*>, info: UtilAnalysisPathInfo, deepResolve: Boolean): SetLat<ValueSource> {
+        return when (val fir = node.fir) {
+            is FirExpression -> resolve(fir, node, info, deepResolve)
+            is FirWhenBranch -> resolve(fir.result, node, info, deepResolve)
+            else -> SetLat()
         }
     }
 
-    // valueref helpers
-
-    private fun getValueRefFromNode(node: CFGNode<*>) : ValueRef? {
-        val fir = node.fir
-
-        if (fir is FirExpression && fir.resolvedType.hasMustConsumeAnnotation(context.session)) {
-            return getExprValueRef(fir, node)
-        } else if (fir is FirWhenBranch && fir.result.resolvedType.hasMustConsumeAnnotation(context.session)) {
-            return getExprValueRef(fir.result, node)
+    private fun resolve(expr: FirExpression?, caller: CFGNode<*>, info: UtilAnalysisPathInfo, deepResolve: Boolean): SetLat<ValueSource> {
+        if (expr == null || !isUtilizableType(expr.resolvedType)) {
+            return emptySource
         }
 
-        return null
-    }
-
-    private fun getExprValueRef(expr: FirExpression?, caller: CFGNode<*>): ValueRef? {
-        if (expr == null) return null
+        if (expr is FirFunctionCall) return SetLat(ValueSource.CallSite(expr))
 
         if (expr !is FirQualifiedAccessExpression) {
-            return ValueRef.Expr(expr)
+            return resolveRef(ValueRef.Expr(expr), caller, info, deepResolve)
         }
 
-        if (expr.calleeReference is FirThisReference) {
-            return ValueRef.ThisRef
-        }
+        if (expr.calleeReference is FirThisReference) return SetLat(ValueSource.ThisRef)
 
-        val symbol = expr.calleeReference.symbol ?: return null
-
-        val varRef = getVarValueRef(symbol, caller)
-
-        if (varRef != null) return varRef
-
-        return ValueRef.Expr(expr)
+        return resolveVar(expr.calleeReference.symbol, caller, info, deepResolve)
     }
 
-    private fun getVarValueRef(symbol: FirBasedSymbol<*>, caller: CFGNode<*>): ValueRef? {
-        val records = funcData.variableRecords[symbol] ?: return null
+    private fun resolveVar(symbol: FirBasedSymbol<*>?, caller: CFGNode<*>, info: UtilAnalysisPathInfo, deepResolve: Boolean): SetLat<ValueSource> {
+        if (symbol == null) return emptySource
 
-        if (records.owner != caller.owner) {
-            return ValueRef.FreeVar(symbol)
-        }
-
-        if (records.paramIndex >= 0) {
-            return ValueRef.Params(symbol, records.paramIndex)
-        }
-
-        return ValueRef.LocalVar(symbol)
+        val records = funcData.variableRecords[symbol] ?: return emptySource
+        return resolveRef(ValueRef.Variable(symbol, records), caller, info, deepResolve)
     }
 
-    // path info helpers
+    private fun resolveRef(valueRef: ValueRef, caller: CFGNode<*>, info: UtilAnalysisPathInfo, deepResolve: Boolean) : SetLat<ValueSource> {
+        if(!deepResolve && valueRef is ValueRef.Variable) {
+            return SetLat(ValueSource.TransientVar(valueRef.symbol, valueRef.record, caller))
+        }
+
+        val reaching = info.reachingValues.getWithDefault(valueRef)
+
+        if (reaching.isEmpty()) {
+            if (valueRef !is ValueRef.Variable)
+                return emptySource
+            if (valueRef.record.owner != caller.owner)
+                return SetLat(ValueSource.FreeVar(valueRef.symbol))
+            if (valueRef.record.paramIndex >= 0)
+                return SetLat(ValueSource.Params(valueRef.symbol, valueRef.record.paramIndex))
+
+            return emptySource
+        }
+
+        if (reaching.size > 1) {
+            val occluded = info.occludedSources.getWithDefault(valueRef)
+            return SetLat.from(reaching.filter { it is ValueSource.CallSite && it !in occluded })
+        }
+
+        val source = reaching.first()
+        if (!deepResolve || source !is ValueSource.TransientVar) return reaching
+
+        if (valueRef is ValueRef.Variable && valueRef.symbol == source.symbol && caller == source.accessAt) {
+            // NOTE: should not be possible, but just in case
+            return emptySource
+        }
+
+        val sourceInfo = data.pathInfos[source.accessAt] ?: return emptySource
+        return resolveRef(ValueRef.Variable(source.symbol, source.record), source.accessAt, sourceInfo, true)
+    }
+
+    private fun getOccluded(valueSources: SetLat<ValueSource>?): SetLat<ValueSource.CallSite> {
+        if (valueSources == null) return emptyCallsites
+
+        val occluded = SmartSet.create<ValueSource.CallSite>()
+
+        for (source in valueSources) {
+            if (source is ValueSource.CallSite) {
+                occluded.add(source)
+            }
+        }
+
+        return SetLat.from(occluded)
+    }
+
+    private val emptySource = SetLat<ValueSource>()
+    private val emptyCallsites = SetLat<ValueSource.CallSite>()
+
+    private fun isUtilizableType(type: ConeKotlinType) : Boolean {
+        return type.hasMustConsumeAnnotation(context.session)
+    }
+
+    // Path Info
+
     private fun propagatePathInfo(node: CFGNode<*>) : UtilAnalysisPathInfo {
-        if (node is FunctionExitNode)
+        if (node is FunctionEnterNode)
             return UtilAnalysisPathInfo()
 
-        val pathInfos = node.followingNodes.asSequence()
-            .filterNot { it.isInvalidNext(node) || it is FunctionEnterNode }
+        val pathInfos = node.previousNodes.asSequence()
+            .filterNot { it.isInvalidPrev(node) || it is FunctionExitNode }
             .mapNotNull { data.pathInfos[it] }
             .toList()
 
@@ -312,96 +373,63 @@ class UtilizationAnalysis(
     }
 }
 
-
-// Utilization analysis
-
-class UtilAnalysisData {
+private class UtilAnalysisData {
     val pathInfos: MutableMap<CFGNode<*>, UtilAnalysisPathInfo> = mutableMapOf()
     val lambdaFuncInfos: MutableMap<FirAnonymousFunction, FunctionInfo> = mutableMapOf()
 }
 
-class UtilAnalysisPathInfo private constructor(
-    private val callSiteUtilization: DefaultMapLat<FirFunctionCall, UtilLattice>,
-    private val localRefUtilization: DefaultMapLat<ValueRef.LocalRef, UtilLattice>,
-    private val nonLocalUtilization: DefaultMapLat<ValueRef.NonLocalRef, UtilLattice>
-) : PathInfo<UtilAnalysisPathInfo>
-{
+private class UtilAnalysisPathInfo private constructor(
+    val reachingValues : DefaultMapLat<ValueRef, SetLat<ValueSource>>,
+    val occludedSources: DefaultMapLat<ValueRef, SetLat<ValueSource.CallSite>>,
+    val callSiteUtils: DefaultMapLat<ValueSource.CallSite, UtilLattice>,
+    val nonLocalUtils: DefaultMapLat<ValueSource.NonLocalSource, UtilLattice>
+) : PathInfo<UtilAnalysisPathInfo> {
     constructor() : this(
+        DefaultMapLat(SetLat()),
+        DefaultMapLat(SetLat()),
         DefaultMapLat(UtilLattice.Bot),
-        DefaultMapLat(UtilLattice.Top),
         DefaultMapLat(UtilLattice.Top)
     )
 
     override fun copy(): UtilAnalysisPathInfo {
         return UtilAnalysisPathInfo(
-            callSiteUtilization.copy(),
-            localRefUtilization.copy(),
-            nonLocalUtilization.copy()
+            reachingValues.copy(),
+            occludedSources.copy(),
+            callSiteUtils.copy(),
+            nonLocalUtils.copy()
         )
     }
 
     override fun merge(other: UtilAnalysisPathInfo): UtilAnalysisPathInfo {
         return UtilAnalysisPathInfo(
-            callSiteUtilization.merge(other.callSiteUtilization),
-            localRefUtilization.merge(other.localRefUtilization),
-            nonLocalUtilization.merge(other.nonLocalUtilization)
+            reachingValues.merge(other.reachingValues),
+            occludedSources.merge(other.occludedSources),
+            callSiteUtils.merge(other.callSiteUtils),
+            nonLocalUtils.merge(other.nonLocalUtils)
         )
     }
-
-    fun setCallSiteUtil(call: FirFunctionCall, util: UtilLattice) {
-        callSiteUtilization[call] = util
-    }
-
-    fun getCallSiteUtil(call: FirFunctionCall) = callSiteUtilization.getWithDefault(call)
-
-    fun callSiteUtils() = callSiteUtilization.asIterable()
-
-    fun meetValRefUtil(valRef: ValueRef?, util: UtilLattice) {
-        if (valRef == null) return
-
-        if (valRef is ValueRef.LocalRef) {
-            localRefUtilization.meetVal(valRef, util)
-        } else {
-            nonLocalUtilization.meetVal(valRef as ValueRef.NonLocalRef, util)
-        }
-    }
-
-    fun resetValRefUtil(valRef: ValueRef?) {
-        if (valRef == null) return
-
-        if (valRef is ValueRef.LocalRef) {
-            localRefUtilization.remove(valRef)
-        } else {
-            nonLocalUtilization.remove(valRef as ValueRef.NonLocalRef)
-        }
-    }
-
-    fun getValRefUtil(valRef: ValueRef) : UtilLattice {
-        return if (valRef is ValueRef.LocalRef) {
-            localRefUtilization.getWithDefault(valRef)
-        } else {
-            nonLocalUtilization.getWithDefault(valRef as ValueRef.NonLocalRef)
-        }
-    }
-
-    fun localUtils() = localRefUtilization.asIterable()
-
-    fun nonLocalUtils() = nonLocalUtilization.asIterable()
 }
 
-sealed interface ValueRef {
-    sealed interface LocalRef : ValueRef
-    sealed interface NonLocalRef : ValueRef
+// Lattices
 
-    data class Expr(val fir: FirExpression) : LocalRef
-    data class LocalVar(val symbol: FirBasedSymbol<*>): LocalRef
-
-    data object ThisRef : NonLocalRef
-    data class Params(val symbol: FirBasedSymbol<*>, val index: Int): NonLocalRef
-    data class FreeVar(val symbol: FirBasedSymbol<*>): NonLocalRef
+private sealed interface ValueRef{
+    data class Expr(val fir: FirExpression) : ValueRef
+    data class Variable(val symbol: FirBasedSymbol<*>, val record: VariableRecord): ValueRef
 }
 
-sealed class UtilLattice(private val value: Int): Lattice<UtilLattice>  {
+private sealed interface ValueSource {
+    data class TransientVar(val symbol: FirBasedSymbol<*>, val record: VariableRecord, val accessAt: CFGNode<*>): ValueSource
+
+    data class CallSite(val fir: FirFunctionCall) : ValueSource
+
+    sealed interface NonLocalSource : ValueSource
+
+    data object ThisRef : NonLocalSource
+    data class Params(val symbol: FirBasedSymbol<*>, val index: Int): NonLocalSource
+    data class FreeVar(val symbol: FirBasedSymbol<*>): NonLocalSource
+}
+
+private sealed class UtilLattice(private val value: Int): Lattice<UtilLattice> {
     data object Top: UtilLattice(3)
     data object RT: UtilLattice(2)
     data object UT: UtilLattice(1)

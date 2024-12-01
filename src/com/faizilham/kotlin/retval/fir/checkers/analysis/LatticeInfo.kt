@@ -1,6 +1,7 @@
 package com.faizilham.kotlin.retval.fir.checkers.analysis
 
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.utils.SmartSet
 
 interface Lattice<T: Lattice<T>> {
     fun join(other: T): T
@@ -40,6 +41,41 @@ class DefaultMapLat<K, V: Lattice<V>> private constructor (val defaultVal: V, pr
     }
 
     fun getWithDefault(key: K?) = this[key] ?: defaultVal
+}
+
+class SetLat<V> private constructor(private val _set: Set<V>)
+    : Set<V> by _set, Lattice<SetLat<V>>
+{
+    constructor() : this(SmartSet.create())
+
+    constructor(value: V) : this() {
+        (_set as SmartSet<V>).add(value)
+    }
+
+    companion object {
+        fun<V> from(values: SmartSet<V>): SetLat<V> {
+            return SetLat(values)
+        }
+
+        fun<V> from(values: Collection<V>): SetLat<V> {
+            return SetLat(SmartSet.create(values))
+        }
+    }
+
+    fun joinWith(value : V): SetLat<V> {
+        val newSet = SmartSet.create(_set)
+        newSet.add(value)
+
+        return SetLat(newSet)
+    }
+
+    override fun join(other: SetLat<V>): SetLat<V> {
+        return SetLat(_set.union(other._set))
+    }
+
+    override fun meet(other: SetLat<V>): SetLat<V> {
+        return SetLat(_set.intersect(other._set).toMutableSet())
+    }
 }
 
 /* Path Info */
