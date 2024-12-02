@@ -140,6 +140,22 @@ fun lateInit2() {
     result = task.await()
 }
 
+fun occlusionTest() {
+    val block = { 1 }
+
+    var task : DummyDeferred<Int>
+    var result : Int?
+
+    task = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+
+    if (1 == 2) {
+        task = <!UNCONSUMED_VALUE!>DummyDeferred(block)<!>
+        task = DummyDeferred(block)
+    }
+
+    result = task.await()
+}
+
 fun paramConsumingLambda() {
     // case: parameter-consuming lambda, with explicit param and implicit it
 

@@ -85,7 +85,7 @@ class UtilizationAnalysis(
             }
         }
 
-        val returningConsumable = func.returnTypeRef.coneType.hasMustConsumeAnnotation(context.session)
+        val returningConsumable = isUtilizableType(func.returnTypeRef.coneType)
         val isExtension = func.receiverParameter != null
 
         return FunctionInfo(
@@ -222,8 +222,8 @@ class UtilizationAnalysis(
 
         val varRef = ValueRef.Variable(symbol, record)
 
-        info.occludedSources[varRef] = getOccluded(info.reachingValues[varRef])
-        info.reachingValues[varRef] = resolve(node.fir.rValue, node, info, false)
+        info.occludedSources.joinVal(varRef, getOccluded(info.reachingValues[varRef]))
+        info.reachingValues[varRef] = resolve(node.fir.rValue, node, info, false) // TODO: solve cyclic assignment?
     }
 
     /* returns and other nodes */
