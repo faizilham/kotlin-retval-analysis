@@ -66,136 +66,150 @@ class UtilizationAnalysis(
         val currentFunction = node.fir
 
         if (currentFunction is FirAnonymousFunction) {
-            data.lambdaFuncInfos[currentFunction] = buildFuncInfo(currentFunction, info)
+            data.lambdaSignatures[currentFunction] = buildFuncInfo(currentFunction, info)
         }
     }
 
-    private fun buildFuncInfo(func: FirFunction, info: UtilAnalysisPathInfo): FunctionInfo {
-        var consumingThis = false
-        val consumedParameters = mutableSetOf<Int>()
-        val consumedFreeVariables = mutableSetOf<FirBasedSymbol<*>>()
+    private fun buildFuncInfo(func: FirFunction, info: UtilAnalysisPathInfo): Signature {
+        var receiverEffect : UtilEffect = UtilEffect.N
+        val paramEffect = mutableMapOf<Int, UtilEffect>()
+        val fvEffect = mutableMapOf<FirBasedSymbol<*>, UtilEffect>()
 
         for ((nonlocal, utilization) in info.nonLocalUtils) {
             if (!utilization.leq(UtilLattice.UT)) continue
 
             when (nonlocal) {
-                is ValueSource.ThisRef -> consumingThis = true
-                is ValueSource.Params -> consumedParameters.add(nonlocal.index)
-                is ValueSource.FreeVar -> consumedFreeVariables.add(nonlocal.symbol)
+                is ValueSource.ThisRef -> receiverEffect = UtilEffect.U
+                is ValueSource.Params -> paramEffect[nonlocal.index] = UtilEffect.U
+                is ValueSource.FreeVar -> fvEffect[nonlocal.symbol] = UtilEffect.U
             }
         }
 
-        val returningConsumable = isUtilizableType(func.returnTypeRef.coneType)
+        val returningUtilizable = isUtilizableType(func.returnTypeRef.coneType)
         val isExtension = func.receiverParameter != null
 
-        return FunctionInfo(
-            isLambda = true,
-            isExtension,
-            returningConsumable,
-            returnIsConsumed = false,
-            consumingThis,
-            consumedParameters,
-            consumedFreeVariables
+        return Signature (
+            isClassMemberOrExtension = isExtension,
+            returningUtilizable,
+
+            receiverSignature = null, // TODO: param signature
+            paramSignature = mapOf(),
+            paramEffect,
+            receiverEffect,
+            fvEffect,
         )
     }
 
     /* Function Call */
 
     private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
-        val funcInfo = getFunctionInfo(node) ?: return
-        if (funcInfo.hasNoEffect()) return
+        val signature = getFunctionSignature(node) ?: return
+        if (signature.hasEffect()) {
+            consumeReceiver(node, info, signature)
+            consumeParameters(node, info, signature)
+            consumeFreeVariables(node, info, signature)
+        }
 
-        consumeReceiver(node, info, funcInfo)
-        consumeParameters(node, info, funcInfo)
-        consumeFreeVariables(node, info, funcInfo)
-
-        if (funcInfo.returningConsumable && !funcInfo.returnIsConsumed) {
+        if (signature.returningUtilizable) {
             val source = ValueSource.CallSite(node.fir)
             info.callSiteUtils[source] = UtilLattice.Top
         }
     }
 
-    private fun consumeReceiver(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
-        if (!funcInfo.consumingThis) return
+    private fun consumeReceiver(node: FunctionCallNode, info: UtilAnalysisPathInfo, signature: Signature) {
+        if (signature.receiverEffect == UtilEffect.N) return
 
         val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return
         val resolvedReceiver = resolve(receiver, node, info, true)
 
-        markUtilized(resolvedReceiver, info)
+        applyEffect(resolvedReceiver, signature.receiverEffect, info)
     }
 
-    private fun consumeParameters(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
-        for (consumedId in funcInfo.consumedParameters) {
-            val arg = node.fir.argumentList.arguments.getOrNull(consumedId) ?: continue
+    private fun consumeParameters(node: FunctionCallNode, info: UtilAnalysisPathInfo, signature: Signature) {
+        for ((paramId, effect) in signature.paramEffect) {
+            val arg = node.fir.argumentList.arguments.getOrNull(paramId) ?: continue
             val argSources = resolve(arg, node, info, true)
 
-            markUtilized(argSources, info)
+            applyEffect(argSources, effect, info)
         }
     }
 
-    private fun consumeFreeVariables(node: FunctionCallNode, info: UtilAnalysisPathInfo, funcInfo: FunctionInfo) {
-        for (freeVar in funcInfo.consumedFreeVariables) {
+    private fun consumeFreeVariables(node: FunctionCallNode, info: UtilAnalysisPathInfo, signature: Signature) {
+        for ((freeVar, effect) in signature.fvEffect) {
             val sources = resolveVar(freeVar, node, info, true)
-            markUtilized(sources, info)
+            applyEffect(sources, effect, info)
         }
     }
 
-    private fun markUtilized(valueSources: SetLat<ValueSource>, info: UtilAnalysisPathInfo) {
+    private fun applyEffect(valueSources: SetLat<ValueSource>, effect: UtilEffect, info: UtilAnalysisPathInfo) {
+        if (effect == UtilEffect.N) return
+
+        val utilization = when(effect) {
+            UtilEffect.N -> return
+            UtilEffect.U -> UtilLattice.UT
+            UtilEffect.I -> UtilLattice.Top
+            else -> return // TODO: Error? Var?
+        }
+
         for (source in valueSources) {
             when(source) {
-                is ValueSource.NonLocalSource -> info.nonLocalUtils.meetVal(source, UtilLattice.UT)
-                is ValueSource.CallSite -> info.callSiteUtils.meetVal(source, UtilLattice.UT)
+                is ValueSource.NonLocalSource -> info.nonLocalUtils.meetVal(source, utilization)
+                is ValueSource.CallSite -> info.callSiteUtils.meetVal(source, utilization)
                 is ValueSource.TransientVar -> {}
             }
         }
     }
 
-    // Function Info Resolving
-
-    private fun getFunctionInfo(node: FunctionCallNode) : FunctionInfo? {
+    // Function Signature Resolving
+    private fun getFunctionSignature(node: FunctionCallNode) : Signature? {
         val fir = node.fir
-        if (fir.isInvoke()) return resolveInvokeFunctionInfo(node)
+        if (fir.isInvoke()) return resolveInvokeSignature(node)
 
-        return FunctionInfo(
-            isLambda = false,
+        return Signature(
             isClassMemberOrExtension = fir.isClassMemberOrExtension(),
-            returningConsumable = isUtilizableType(fir.resolvedType),
-            returnIsConsumed = fir.hasDiscardableAnnotation(context.session),
-            consumingThis = fir.hasConsumeAnnotation(context.session),
-            consumedParameters = fir.getConsumedParameters()
+            returningUtilizable = isUtilizableType(fir.resolvedType),
+
+            receiverSignature = null, // TODO: param signature
+            paramSignature = mapOf(),
+
+            paramEffect = fir.getParameterEffects(),
+            receiverEffect = if (fir.hasConsumeAnnotation(context.session)) UtilEffect.U else UtilEffect.N ,
+            fvEffect = mapOf(),
         )
     }
 
-    private fun resolveInvokeFunctionInfo(node: FunctionCallNode) : FunctionInfo? {
+    private fun resolveInvokeSignature(node: FunctionCallNode) : Signature? {
         val originalRef = (node.fir.dispatchReceiver as? FirQualifiedAccessExpression)?.calleeReference ?: return null
         val originalSymbol = originalRef.toResolvedCallableSymbol() ?: return null
 
         val funcRef = funcData.pathInfos[node]?.getVarValue(originalSymbol) ?: return null
-        var funcInfo = getFuncRefInfo(funcRef) ?: return null
+        var funcInfo = getFuncRefSignature(funcRef) ?: return null
 
         // NOTE: invoking extension function causes the context object to be regarded as first argument
         //       the dispatchReceiver is no longer the context object, but the function reference
         if (funcInfo.isClassMemberOrExtension) {
-            funcInfo = funcInfo.convertThisToFirstParameter()
+            funcInfo = funcInfo.convertReceiverToParameter()
         }
 
         return funcInfo
     }
 
-    private fun getFuncRefInfo(funcRef: FuncRefValue): FunctionInfo? {
+    private fun getFuncRefSignature(funcRef: FuncRefValue): Signature? {
         return when (funcRef) {
-            is FuncRefValue.LambdaRef -> data.lambdaFuncInfos[funcRef.lambda]
+            is FuncRefValue.LambdaRef -> data.lambdaSignatures[funcRef.lambda]
             is FuncRefValue.CallableRef -> {
                 val ref = funcRef.ref
                 val returnType = ref.getReturnType() ?: return null
 
-                FunctionInfo(
-                    isLambda = false,
+                Signature(
                     isClassMemberOrExtension = ref.isClassMemberOrExtension(),
-                    returningConsumable = isUtilizableType(returnType),
-                    returnIsConsumed = ref.hasDiscardableAnnotation(context.session),
-                    consumingThis = ref.hasConsumeAnnotation(context.session),
-                    consumedParameters = ref.getConsumedParameters()
+                    returningUtilizable = isUtilizableType(returnType),
+
+                    receiverSignature = null, // TODO: param signature
+                    paramSignature = mapOf(),
+                    paramEffect = ref.getParameterEffects(),
+                    receiverEffect = if (ref.hasConsumeAnnotation(context.session)) UtilEffect.U else UtilEffect.N ,
+                    fvEffect = mapOf(),
                 )
             }
             else -> null
@@ -259,8 +273,7 @@ class UtilizationAnalysis(
 
         info.reachingValues[ValueRef.Expr(firExpr)] = SetLat.from(combined)
     }
-
-
+    
     // resolving
 
     private fun resolveNode(node: CFGNode<*>, info: UtilAnalysisPathInfo, deepResolve: Boolean): SetLat<ValueSource> {
@@ -375,7 +388,7 @@ class UtilizationAnalysis(
 
 private class UtilAnalysisData {
     val pathInfos: MutableMap<CFGNode<*>, UtilAnalysisPathInfo> = mutableMapOf()
-    val lambdaFuncInfos: MutableMap<FirAnonymousFunction, FunctionInfo> = mutableMapOf()
+    val lambdaSignatures: MutableMap<FirAnonymousFunction, Signature> = mutableMapOf()
 }
 
 private class UtilAnalysisPathInfo private constructor(
