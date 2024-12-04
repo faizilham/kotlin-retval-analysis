@@ -27,6 +27,12 @@ public class DiagnosticTestGenerated extends AbstractDiagnosticTest {
   }
 
   @Test
+  @TestMetadata("highorder.kt")
+  public void testHighorder() {
+    runTest("testData/diagnostics/highorder.kt");
+  }
+
+  @Test
   @TestMetadata("propagation.kt")
   public void testPropagation() {
     runTest("testData/diagnostics/propagation.kt");

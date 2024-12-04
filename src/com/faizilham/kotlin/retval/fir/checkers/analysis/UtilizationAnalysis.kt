@@ -7,15 +7,16 @@ import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirFunction
+import org.jetbrains.kotlin.fir.declarations.getAnnotationByClassId
 import org.jetbrains.kotlin.fir.expressions.*
-import org.jetbrains.kotlin.fir.references.FirThisReference
-import org.jetbrains.kotlin.fir.references.symbol
-import org.jetbrains.kotlin.fir.references.toResolvedCallableSymbol
+import org.jetbrains.kotlin.fir.packageFqName
+import org.jetbrains.kotlin.fir.references.*
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.types.ConeKotlinType
 import org.jetbrains.kotlin.fir.types.coneType
 import org.jetbrains.kotlin.fir.types.resolvedType
+import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.utils.SmartSet
 
 class UtilizationAnalysis(
@@ -66,11 +67,11 @@ class UtilizationAnalysis(
         val currentFunction = node.fir
 
         if (currentFunction is FirAnonymousFunction) {
-            data.lambdaSignatures[currentFunction] = buildFuncInfo(currentFunction, info)
+            data.lambdaSignatures[currentFunction] = buildLambdaSignature(currentFunction, info)
         }
     }
 
-    private fun buildFuncInfo(func: FirFunction, info: UtilAnalysisPathInfo): Signature {
+    private fun buildLambdaSignature(func: FirFunction, info: UtilAnalysisPathInfo): Signature {
         var receiverEffect : UtilEffect = UtilEffect.N
         val paramEffect = mutableMapOf<Int, UtilEffect>()
         val fvEffect = mutableMapOf<FirBasedSymbol<*>, UtilEffect>()
@@ -96,14 +97,16 @@ class UtilizationAnalysis(
             paramSignature = mapOf(),
             paramEffect,
             receiverEffect,
-            fvEffect,
+            fvEffect = FVEffectSign.FVEMap(fvEffect),
         )
     }
 
     /* Function Call */
 
     private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
+        testFunc(node.fir)
         val signature = getFunctionSignature(node) ?: return
+
         if (signature.hasEffect()) {
             consumeReceiver(node, info, signature)
             consumeParameters(node, info, signature)
@@ -113,6 +116,35 @@ class UtilizationAnalysis(
         if (signature.returningUtilizable) {
             val source = ValueSource.CallSite(node.fir)
             info.callSiteUtils[source] = UtilLattice.Top
+        }
+    }
+
+    private fun testFunc(fir: FirFunctionCall) {
+        val funcSymbol = fir.calleeReference.toResolvedFunctionSymbol() ?: return
+
+        val ann = funcSymbol.getAnnotationByClassId(Commons.Annotations.UEffect, context.session) ?: return
+
+        val effects = (ann.argumentMapping.mapping[Name.identifier("effects")] as? FirArrayLiteral) ?: return
+
+        log("ann ${fir.calleeReference.name} $ann")
+
+        for (ue in effects.argumentList.arguments) {
+            val ueCall = ue as? FirFunctionCall ?: continue
+
+            val args = ueCall.argumentList.arguments
+            if (args.size != 2) continue
+
+            val effect = (args[1] as? FirLiteralExpression<*>)?.value as? String ?: continue
+            val targ = args[0]
+            var target = -999
+
+            if (targ is FirLiteralExpression<*>) {
+                target = (targ.value as? Long)?.toInt() ?: (targ.value as? Int) ?: continue
+            } else if (targ is FirPropertyAccessExpression && targ.calleeReference.symbol?.packageFqName() == Commons.Annotations.PACKAGE_FQN) {
+                target = Commons.Annotations.UETarget[targ.calleeReference.resolved?.name?.toString()] ?: continue
+            }
+
+            log("  ${target} ${effect}")
         }
     }
 
@@ -135,7 +167,9 @@ class UtilizationAnalysis(
     }
 
     private fun consumeFreeVariables(node: FunctionCallNode, info: UtilAnalysisPathInfo, signature: Signature) {
-        for ((freeVar, effect) in signature.fvEffect) {
+        val fvEffect = signature.fvEffect as? FVEffectSign.FVEMap ?: return
+
+        for ((freeVar, effect) in fvEffect.map) {
             val sources = resolveVar(freeVar, node, info, true)
             applyEffect(sources, effect, info)
         }
@@ -171,10 +205,9 @@ class UtilizationAnalysis(
 
             receiverSignature = null, // TODO: param signature
             paramSignature = mapOf(),
-
             paramEffect = fir.getParameterEffects(),
             receiverEffect = if (fir.hasConsumeAnnotation(context.session)) UtilEffect.U else UtilEffect.N ,
-            fvEffect = mapOf(),
+            fvEffect = FVEffectSign.FVEMap(),
         )
     }
 
@@ -209,7 +242,7 @@ class UtilizationAnalysis(
                     paramSignature = mapOf(),
                     paramEffect = ref.getParameterEffects(),
                     receiverEffect = if (ref.hasConsumeAnnotation(context.session)) UtilEffect.U else UtilEffect.N ,
-                    fvEffect = mapOf(),
+                    fvEffect = FVEffectSign.FVEMap(),
                 )
             }
             else -> null
@@ -273,7 +306,7 @@ class UtilizationAnalysis(
 
         info.reachingValues[ValueRef.Expr(firExpr)] = SetLat.from(combined)
     }
-    
+
     // resolving
 
     private fun resolveNode(node: CFGNode<*>, info: UtilAnalysisPathInfo, deepResolve: Boolean): SetLat<ValueSource> {
@@ -455,4 +488,66 @@ private sealed class UtilLattice(private val value: Int): Lattice<UtilLattice> {
     override fun join(other: UtilLattice) = if (this.geq(other)) this else other
 
     override fun meet(other: UtilLattice) = if (this.geq(other)) other else this
+}
+
+// UEffect parsing
+data class ParsedUEffect(
+    val receiverEffect: UtilEffect,
+    val paramEffect: Map<Int, UtilEffect>,
+    val fvEffect: FVEffectSign
+)
+
+private fun parseUEffectAnnotation(anno: FirAnnotation) : ParsedUEffect? {
+    val effects = (anno.argumentMapping.mapping[Name.identifier("effects")] as? FirArrayLiteral) ?: return null
+
+    var receiverEffect : UtilEffect = UtilEffect.N
+    val paramEffect = mutableMapOf<Int, UtilEffect>()
+    var fvEffect: FVEffectSign = FVEffectSign.FVEMap()
+
+    for (ueCall in effects.argumentList.arguments) {
+        val (target, effect) = parseUECall(ueCall) ?: continue
+
+        if (target >= 0) {
+            paramEffect[target] = effect
+        } else if (target == -1) {
+            receiverEffect = effect
+        } else if (target == -2 && effect is UtilEffect.Var) {
+            fvEffect = FVEffectSign.FVEVar(effect.name)
+        }
+
+        // TODO: error for others?
+    }
+
+    return ParsedUEffect(receiverEffect, paramEffect, fvEffect)
+}
+
+private fun parseUECall(fir: FirExpression?) : Pair<Int, UtilEffect>? {
+    val ueCall = (fir as? FirFunctionCall) ?: return null
+    val args = ueCall.argumentList.arguments
+    if (args.size != 2) return null
+
+    val targetFir = args[0]
+    val target = if (targetFir is FirLiteralExpression<*>) {
+        (targetFir.value as? Long)?.toInt() ?: (targetFir.value as? Int) ?: return null
+    } else if (
+        targetFir is FirPropertyAccessExpression &&
+        targetFir.calleeReference.symbol?.packageFqName() == Commons.Annotations.PACKAGE_FQN
+    ) {
+        Commons.Annotations.UETarget[targetFir.calleeReference.resolved?.name?.toString()] ?: return null
+    } else {
+        return null
+    }
+
+    if (target < -2) return null
+
+    val effectStr = (args[1] as? FirLiteralExpression<*>)?.value as? String ?: return null
+
+    val effect = when(effectStr) {
+        "U" -> UtilEffect.U
+        "N" -> UtilEffect.N
+        "I" -> UtilEffect.I
+        else -> UtilEffect.Var(effectStr)
+    }
+
+    return Pair(target, effect)
 }

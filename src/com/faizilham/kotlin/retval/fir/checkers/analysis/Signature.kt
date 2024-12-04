@@ -1,5 +1,7 @@
 package com.faizilham.kotlin.retval.fir.checkers.analysis
 
+import com.faizilham.kotlin.retval.fir.checkers.analysis.FVEffectSign.FVEMap
+import com.faizilham.kotlin.retval.fir.checkers.analysis.FVEffectSign.FVEVar
 import com.faizilham.kotlin.retval.fir.checkers.analysis.UtilEffect.Var
 import com.faizilham.kotlin.retval.fir.checkers.commons.Commons
 import com.faizilham.kotlin.retval.fir.checkers.commons.containsAnnotation
@@ -16,7 +18,7 @@ data class Signature(
 
     val paramEffect : Map<Int, UtilEffect>,
     val receiverEffect: UtilEffect,
-    val fvEffect: Map<FirBasedSymbol<*>, UtilEffect>,
+    val fvEffect: FVEffectSign,
     val convertedReceiver: Boolean = false
 ) {
     fun convertReceiverToParameter() : Signature {
@@ -49,7 +51,9 @@ data class Signature(
     }
 
     fun hasEffect() : Boolean {
-        return paramEffect.isNotEmpty() || fvEffect.isNotEmpty() || receiverEffect != UtilEffect.N
+        return  paramEffect.isNotEmpty() ||
+                receiverEffect != UtilEffect.N ||
+                (fvEffect is FVEMap && fvEffect.map.isNotEmpty())
     }
 }
 
@@ -69,7 +73,7 @@ fun FirQualifiedAccessExpression.getParameterEffects() : Map<Int, UtilEffect> {
 }
 
 fun Signature.instantiateWith(other: Signature) : Signature {
-    val env = collectEffectVars()
+    val (env, fvEnv) = collectEffectVars()
 
     if (env.isEmpty()) return this
 
@@ -81,13 +85,12 @@ fun Signature.instantiateWith(other: Signature) : Signature {
         }
 
     if (receiverSignature != null && concrete.receiverSignature != null) {
-        receiverSignature.unifySignature(env, concrete.receiverSignature)
+        receiverSignature.unifySignature(env, fvEnv, concrete.receiverSignature)
     }
 
     for ((i, targetParSign) in paramSignature) {
         val concreteParSign =  concrete.paramSignature[i] ?: continue
-
-        targetParSign.unifySignature(env, concreteParSign)
+        targetParSign.unifySignature(env, fvEnv, concreteParSign)
     }
 
     return Signature(
@@ -99,39 +102,55 @@ fun Signature.instantiateWith(other: Signature) : Signature {
 
         paramEffect = paramEffect.instantiateBy(env),
         receiverEffect = receiverEffect.instantiateBy(env),
-        fvEffect = fvEffect.instantiateBy(env),
+        fvEffect = fvEffect.instantiateBy(env, fvEnv),
         convertedReceiver
     )
 }
 
-private fun Signature.collectEffectVars() : VarEffectEnv {
-    val env = mutableMapOf<UtilEffect.Var, MutableSet<UtilEffect>>()
+private fun Signature.collectEffectVars() : Pair<VarEffectEnv, FVEffectEnv> {
+    val env = mutableMapOf<Var, MutableSet<UtilEffect>>()
 
-    if (receiverEffect is UtilEffect.Var) env[receiverEffect] = mutableSetOf()
+    if (receiverEffect is Var) env[receiverEffect] = mutableSetOf()
 
     for ((_, effect) in paramEffect) {
-        if (effect is UtilEffect.Var) env[effect] = mutableSetOf()
+        if (effect is Var) env[effect] = mutableSetOf()
     }
 
-    for ((_, effect) in fvEffect) {
-        if (effect is UtilEffect.Var) env[effect] = mutableSetOf()
+    if (fvEffect is FVEMap) {
+        for ((_, effect) in fvEffect.map) {
+            if (effect is Var) env[effect] = mutableSetOf()
+        }
     }
 
-    return env
+    return Pair(env, mutableMapOf())
 }
 
-fun Signature.unifySignature(env: VarEffectEnv, concrete: Signature) {
+fun Signature.unifySignature(env: VarEffectEnv, fvEnv: FVEffectEnv, concrete: Signature) {
     unifyEffect(env, receiverEffect, concrete.receiverEffect)
 
-    for ((_, effect) in paramEffect) {
-        if (effect is UtilEffect.Var) env[effect] = mutableSetOf()
-
-        unifyEffect(env, receiverEffect, concrete.receiverEffect)
-
+    for ((i, effect) in paramEffect) {
+        if (effect !is Var) continue
+        unifyEffect(env, effect, concrete.paramEffect[i])
     }
 
-    for ((_, effect) in fvEffect) {
-        if (effect is UtilEffect.Var) env[effect] = mutableSetOf()
+    unifyFVSign(env, fvEnv, fvEffect, concrete.fvEffect)
+}
+
+fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, concrete: FVEffectSign) {
+    if (concrete !is FVEMap) return // TODO: error?
+
+    when (target) {
+        is FVEMap -> {
+            for ((v, effect) in target.map) {
+                if (effect !is Var) continue
+                unifyEffect(env, effect, concrete.map[v])
+            }
+        }
+
+        is FVEVar -> {
+            fvEnv[target] = concrete
+            //TODO: error if already exist?
+        }
     }
 }
 
@@ -144,15 +163,31 @@ fun unifyEffect(env: VarEffectEnv, target: UtilEffect, concrete: UtilEffect?) {
     env.addEffect(target, concrete)
 }
 
+sealed interface FVEffectSign {
+    data class FVEVar(val name: String): FVEffectSign
+    data class FVEMap(val map: Map<FirBasedSymbol<*>, UtilEffect> = mapOf()): FVEffectSign
+}
 
-typealias VarEffectEnv = MutableMap<UtilEffect.Var, MutableSet<UtilEffect>>
+typealias VarEffectEnv = MutableMap<Var, MutableSet<UtilEffect>>
 
-fun VarEffectEnv.addEffect(key: UtilEffect.Var, effect: UtilEffect) {
+fun VarEffectEnv.addEffect(key: Var, effect: UtilEffect) {
     if (key !in this) {
         this[key] = mutableSetOf()
     }
 
     this[key]?.add(effect)
+}
+
+typealias FVEffectEnv = MutableMap<FVEVar, FVEMap>
+
+fun FVEffectSign.instantiateBy(env: VarEffectEnv, fvEnv: FVEffectEnv) : FVEffectSign {
+    if (this is FVEMap) return this.instantiateBy(env)
+
+    return fvEnv[this]?.instantiateBy(env) ?: this
+}
+
+fun FVEMap.instantiateBy(env: VarEffectEnv): FVEMap {
+    return FVEMap(map.instantiateBy(env))
 }
 
 fun <K> Map<K, UtilEffect>.instantiateBy(env: VarEffectEnv) : Map<K, UtilEffect> {

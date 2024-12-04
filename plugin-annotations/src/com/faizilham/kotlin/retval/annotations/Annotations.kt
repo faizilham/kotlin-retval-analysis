@@ -14,25 +14,15 @@ annotation class MustConsume
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.VALUE_PARAMETER)
 annotation class Consume
 
-const val THIS = -1
+const val THIS = -1 // represents context object / this
+const val FV = -2   // represents set of FV, only valid with variables
 
-// Pre-req:
-// - funcParam is valid parameter or receiver index, and is of a function type
-// - insideParam is a valid parameter or receiver index in funcParam, and a must-consume type
-annotation class ConsumeBy(val funcParam: Int, val insideParam: Int)
+// utilValue: U | N | I, other strings will be used as variable name
+@Target()
+annotation class UE(val target: Int, val utilValue: String)
 
-// Pre-req:
-// - insideParam is a valid parameter or receiver index, and a must-consume type
-// - all constraints are valid ConsumeBy
-annotation class ConsumeRule(val target: Int, val constraints: Array<ConsumeBy>)
-
-// Pre-req:
-// - all rules are valid ConsumeRule
-// - no duplicate ConsumeRule by target
-@Target(AnnotationTarget.FUNCTION)
-annotation class ConsumeRules(val rules: Array<ConsumeRule>)
-
-//
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.VALUE_PARAMETER)
+annotation class UEffect(val effects: Array<UE>)
 
 @Target(AnnotationTarget.TYPE)
 annotation class MayUse

@@ -108,7 +108,7 @@ sealed interface UtilEffect {
     data object U : UtilEffect
     data object N : UtilEffect
     data object I : UtilEffect
-    data class Var(val id: Int): UtilEffect
+    data class Var(val name: String): UtilEffect
     data class Err(val message: String): UtilEffect
 
     operator fun plus(other: UtilEffect): UtilEffect {

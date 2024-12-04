@@ -11,11 +11,17 @@ import org.jetbrains.kotlin.psi.KtExpression
 object Commons {
     object Annotations {
         /* Annotation class ids */
-        private val PACKAGE_FQN = FqName("com.faizilham.kotlin.retval.annotations")
+        val PACKAGE_FQN = FqName("com.faizilham.kotlin.retval.annotations")
         val Discardable = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
         val MustConsume = ClassId(PACKAGE_FQN, Name.identifier("MustConsume"))
         val Consume = ClassId(PACKAGE_FQN, Name.identifier("Consume"))
         val SameUse = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
+
+        val UEffect = ClassId(PACKAGE_FQN, Name.identifier("UEffect"))
+        val UETarget : Map<String, Int> = mapOf(
+            "THIS" to -1,
+            "FV" to -2
+        )
 
         val MayUse = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
         val AnyUse = ClassId(PACKAGE_FQN, Name.identifier("AnyUse"))
