@@ -32,23 +32,43 @@ fun<T> myawait(@Consume x: DummyDeferred<T>): T? {
 }
 
 @UEffect([UE(1, "U")])
-fun<T> mycancel(x: DummyDeferred<T>) {
+fun mycancel(x: DummyDeferred<*>) {
     x.cancel()
 }
 
-@UEffect([UE(THIS, "a"), UE(-2, "f")])
+@UEffect([UE(THIS, "a"), UE(FV, "f")])
 fun<A, B> A.let1(
     @UEffect([UE(0, "a"), UE(FV, "f")]) f: (A) -> B
 ): B {
     return f(this)
 }
 
+@UEffect([UE(0, "a"), UE(FV, "f")])
+fun <A, B> with1(
+    receiver: A,
+    @UEffect([UE(THIS, "a"), UE(FV, "f")]) block: A.() -> B
+): B {
+    return receiver.block()
+}
+
+fun Int.abc() { }
+
+fun withAbc(x: Int, f: Int.() -> Unit) {}
+
 fun simple() {
     val task1 = DummyDeferred { 1 }
 
-    val result = task1.let1(::myawait)
+    var result = task1.let1(::myawait)
 
-    mycancel(task1)
+    result = with1(task1, DummyDeferred<Int>::await)
+
+    withAbc(1, Int::abc)
+
+//    val awaitAlias : (DummyDeferred<Int>) -> Int? = ::myawait
+//
+//    result = awaitAlias(task1)
+//
+//    mycancel(task1)
 
     task1.cancel() // TODO: remove for true test
 }

@@ -11,6 +11,8 @@ import org.jetbrains.kotlin.fir.references.toResolvedFunctionSymbol
 import org.jetbrains.kotlin.fir.resolve.dfa.cfg.*
 import org.jetbrains.kotlin.fir.resolve.isInvoke
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirFunctionSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.isExtension
 import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.name.ClassId
 
@@ -80,8 +82,11 @@ fun FirQualifiedAccessExpression.hasDiscardableAnnotation(session: FirSession) :
 
 fun FirQualifiedAccessExpression.hasConsumeAnnotation(session: FirSession) : Boolean {
     val funcSymbol = calleeReference.toResolvedFunctionSymbol() ?: return false
+    return funcSymbol.hasConsumeAnnotation(session)
+}
 
-    return funcSymbol.hasAnnotation(Commons.Annotations.Consume, session)
+fun FirFunctionSymbol<*>.hasConsumeAnnotation(session: FirSession) : Boolean {
+    return hasAnnotation(Commons.Annotations.Consume, session)
 }
 
 fun FirQualifiedAccessExpression.getConsumedParameters() : Set<Int> {
@@ -106,8 +111,11 @@ fun FirBasedSymbol<*>.containsAnnotation(classId: ClassId) : Boolean {
 fun FirFunctionCall.isInvoke() = calleeReference.toResolvedFunctionSymbol()?.callableId?.isInvoke() ?: false
 
 fun FirQualifiedAccessExpression.isClassMemberOrExtension() : Boolean {
-    return  resolvedType.isExtensionFunctionType ||
-            (calleeReference.toResolvedFunctionSymbol()?.containingClassLookupTag() != null)
+    return calleeReference.toResolvedFunctionSymbol()?.isClassMemberOrExtension() ?: false
+}
+
+fun FirFunctionSymbol<*>.isClassMemberOrExtension() : Boolean {
+    return isExtension || (containingClassLookupTag() != null)
 }
 
 /* Cone Type Helpers */

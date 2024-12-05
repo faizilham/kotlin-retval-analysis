@@ -103,43 +103,6 @@ fun<T: PathInfo<T>> List<T>.mergeAll(mustCopy : Boolean = false) : T? {
     return info
 }
 
-/* Utilization Effect */
-sealed interface UtilEffect {
-    data object U : UtilEffect
-    data object N : UtilEffect
-    data object I : UtilEffect
-    data class Var(val name: String): UtilEffect
-    data class Err(val message: String): UtilEffect
-
-    operator fun plus(other: UtilEffect): UtilEffect {
-        if (this is Err) return this
-        if (other is Err) return other
-
-        if (this == other) return this
-        if (this == I || other == I) return I
-        if (this == U || other == U) return U
-
-        if (this is Var) return this
-        if (other is Var) return other
-
-        return N
-    }
-
-    operator fun times(other: UtilEffect): UtilEffect {
-        if (this is Err) return this
-        if (other is Err) return other
-
-        if (this == other) return this
-        if (this == I || other == I) return I
-        if (this == N || other == N) return N
-
-        if (this is Var) return this
-        if (other is Var) return other
-
-        return U
-    }
-}
-
 /* Function Info */
 
 data class FunctionInfo(
