@@ -78,4 +78,28 @@ fun withFV() {
     task1.let1(canceler)
 
     task3.let1 { doNothing(it) }
+
+    val task4 = DummyDeferred { 1 }
+    val task5 = DummyDeferred { 1 }
+    task4.let1 { it.cancel(); task5.cancel() }
+}
+
+
+// letUtilize :: (Def[t], (Def[t]) -> t & <U> + f) -> t & <U, N> + f
+
+@UEffect([UE(THIS, "U"), UE(FV, "f")])
+fun <T, R> DummyDeferred<T>.letUtilize(
+    @UEffect([UE(0, "U"), UE(FV, "f")]) block: (DummyDeferred<T>) -> R
+): R {
+    return block(this)
+}
+
+fun effectMismatch() {
+    val task1 = DummyDeferred { 1 }
+    task1.letUtilize { it.cancel() }
+
+    // TODO: fix this
+//    val task2 = <!UNCONSUMED_VALUE! >DummyDeferred { 1 }<! >
+//
+//    task2.letUtilize(::doNothing)
 }

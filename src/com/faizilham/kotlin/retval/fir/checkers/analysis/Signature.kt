@@ -130,11 +130,12 @@ sealed interface UtilEffect {
             return "\$$name"
         }
     }
-    data class Err(val message: String): UtilEffect
+
+//    data class Err(val message: String): UtilEffect
 
     operator fun plus(other: UtilEffect): UtilEffect {
-        if (this is Err) return this
-        if (other is Err) return other
+//        if (this is Err) return this
+//        if (other is Err) return other
 
         if (this == other) return this
         if (this == I || other == I) return I
@@ -147,8 +148,8 @@ sealed interface UtilEffect {
     }
 
     operator fun times(other: UtilEffect): UtilEffect {
-        if (this is Err) return this
-        if (other is Err) return other
+//        if (this is Err) return this
+//        if (other is Err) return other
 
         if (this == other) return this
         if (this == I || other == I) return I
@@ -162,7 +163,6 @@ sealed interface UtilEffect {
 }
 
 /* FV Effect Signature */
-
 sealed interface FVEffectSign {
     // FVEMap should only be constructable from inference
     data class FVEMap(val map: Map<FirBasedSymbol<*>, UtilEffect> = mapOf()): FVEffectSign
@@ -176,6 +176,9 @@ sealed interface FVEffectSign {
 }
 
 /* Instantiation and Unification */
+
+class SignatureInstanceException(message: String) : Exception(message)
+
 fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
     if (effectVars.isEmpty() && fvEffect !is FVEVar) return this
 
@@ -213,7 +216,7 @@ fun unifySignature(env: VarEffectEnv, fvEnv: FVEffectEnv, target: Signature, con
 }
 
 fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, concrete: FVEffectSign) {
-    if (concrete !is FVEMap) return // TODO: error?
+    if (concrete !is FVEMap) return
 
     when (target) {
         is FVEMap -> {
@@ -224,15 +227,18 @@ fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, con
         }
 
         is FVEVar -> {
+            if (target in fvEnv && fvEnv[target] != concrete) {
+                throw SignatureInstanceException("Mismatch FV var $target")
+            }
+
             fvEnv[target] = concrete
-            //TODO: error if already exist?
         }
     }
 }
 
 fun unifyEffect(env: VarEffectEnv, target: UtilEffect, concrete: UtilEffect?) {
     if (target == concrete) return
-    if (target !is Var) return // TODO: error?
+    if (target !is Var) throw SignatureInstanceException("Mismatch effect: got $concrete, expected $target")
 
     if (concrete == null) return
 
@@ -255,7 +261,7 @@ typealias FVEffectEnv = MutableMap<FVEVar, FVEMap>
 fun FVEffectSign.instantiateBy(env: VarEffectEnv, fvEnv: FVEffectEnv) : FVEffectSign {
     if (this is FVEMap) return this.instantiateBy(env)
 
-    return fvEnv[this]?.instantiateBy(env) ?: this
+    return fvEnv[this]?.instantiateBy(env) ?: FVEMap()
 }
 
 fun FVEMap.instantiateBy(env: VarEffectEnv): FVEMap {
@@ -268,7 +274,7 @@ fun <K> Map<K, UtilEffect>.instantiateBy(env: VarEffectEnv) : Map<K, UtilEffect>
 
 fun UtilEffect.instantiateBy(env: VarEffectEnv) : UtilEffect{
     if (this !is Var) return this
-    return combine(env[this]) ?: this
+    return combine(env[this]) ?: UtilEffect.N
 }
 
 fun combine(effects: Set<UtilEffect>?) : UtilEffect? {

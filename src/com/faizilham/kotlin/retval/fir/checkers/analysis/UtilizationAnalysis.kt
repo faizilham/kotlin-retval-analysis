@@ -1,6 +1,7 @@
 package com.faizilham.kotlin.retval.fir.checkers.analysis
 
 import com.faizilham.kotlin.retval.fir.checkers.commons.*
+import org.jetbrains.kotlin.diagnostics.DiagnosticContext
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
 import org.jetbrains.kotlin.diagnostics.reportOn
 import org.jetbrains.kotlin.fir.FirElement
@@ -25,7 +26,7 @@ class UtilizationAnalysis(
 )
 {
     private val data = UtilAnalysisData()
-    private val warnings: MutableList<FirElement> = mutableListOf()
+    private val warnings: MutableList<AnalysisWarning> = mutableListOf()
 
     fun analyzeGraph(graph: ControlFlowGraph) {
         for (node in graph.nodes) {
@@ -35,8 +36,8 @@ class UtilizationAnalysis(
     }
 
     fun report(reporter: DiagnosticReporter) {
-        for (warnedFir in warnings) {
-            reporter.reportOn(warnedFir.source, Commons.Warnings.UNCONSUMED_VALUE, context)
+        for (warning in warnings) {
+            warning.report(reporter, context)
         }
     }
 
@@ -58,7 +59,7 @@ class UtilizationAnalysis(
         // Warnings
         for ((call, util) in info.callSiteUtils) {
             if (!util.leq(UtilLattice.RT)) {
-                warnings.add(call.fir)
+                warnings.add(UnutilizedValueWarning(call.fir))
             }
         }
 
@@ -74,6 +75,7 @@ class UtilizationAnalysis(
         var receiverEffect : UtilEffect = UtilEffect.N
         val paramEffect = mutableMapOf<Int, UtilEffect>()
         val fvEffect = mutableMapOf<FirBasedSymbol<*>, UtilEffect>()
+
 
         for ((nonlocal, utilization) in info.nonLocalUtils) {
             if (!utilization.leq(UtilLattice.UT)) continue
@@ -104,11 +106,13 @@ class UtilizationAnalysis(
         if (signature.hasEffect()) {
             val sigInstance = instantiateSignature(node, signature)
 
-            if (!sigInstance.isParametric()) {
+            if (sigInstance?.isParametric() == false) {
                 consumeReceiver(node, info, sigInstance)
                 consumeParameters(node, info, sigInstance)
                 consumeFreeVariables(node, info, sigInstance)
-            } // TODO: report error otherwise?
+            } else {
+                warnings.add(MismatchUtilEffectWarning(node.fir))
+            }
         }
 
         if (isUtilizableType(node.fir.resolvedType)) {
@@ -151,7 +155,7 @@ class UtilizationAnalysis(
             UtilEffect.N -> return
             UtilEffect.U -> UtilLattice.UT
             UtilEffect.I -> UtilLattice.Top
-            else -> return // TODO: Error? Var?
+            else -> return // TODO: Var?
         }
 
         for (source in valueSources) {
@@ -209,27 +213,34 @@ class UtilizationAnalysis(
         return newSignature
     }
 
-    private fun instantiateSignature(node: FunctionCallNode, signature: Signature) : Signature {
+    private fun instantiateSignature(node: FunctionCallNode, signature: Signature) : Signature? {
         if (!signature.isParametric()) return signature
 
-        val arguments = node.fir.argumentList.arguments
-
-        val argSignatures = arguments.map {
+        val argSignatures = node.fir.arguments.map {
             if (!it.resolvedType.isSomeFunctionType(context.session)) null
             else getArgumentSignature(node, it)
         }
 
-        return signature.instantiateWith(argSignatures)
+        try {
+            return signature.instantiateWith(argSignatures)
+        } catch (e: SignatureInstanceException) {
+            log("SignatureInstanceException ${node.fir.calleeReference.name} $e")
+            return null
+        }
     }
 
     private fun getArgumentSignature(node: CFGNode<*>, argument: FirExpression): Signature? {
-        val symbol = argument.toResolvedCallableSymbol(context.session) ?: return null
+        val symbol = argument.toResolvedCallableSymbol(context.session)
 
         if (symbol is FirFunctionSymbol<*>) {
             return getSignature(symbol)
+        } else if (symbol != null) {
+            return resolveSymbolSignature(node, symbol)
         }
 
-        return resolveSymbolSignature(node, symbol)
+        val lambda = argument as? FirAnonymousFunctionExpression ?: return null
+
+        return data.lambdaSignatures[lambda.anonymousFunction]
     }
 
     /* Variable aliasing */
@@ -590,4 +601,21 @@ private fun parseUECall(fir: FirExpression?) : Pair<Int, UtilEffect>? {
 
 private fun isUtilizableType(session: FirSession, type: ConeKotlinType) : Boolean {
     return type.hasMustConsumeAnnotation(session)
+}
+
+// Warnings
+private abstract class AnalysisWarning(val fir: FirElement) {
+    abstract fun report(reporter: DiagnosticReporter, context: DiagnosticContext)
+}
+
+private class UnutilizedValueWarning(fir: FirElement): AnalysisWarning(fir){
+    override fun report(reporter: DiagnosticReporter, context: DiagnosticContext) {
+        reporter.reportOn(fir.source, Commons.Warnings.UNCONSUMED_VALUE, context)
+    }
+}
+
+private class MismatchUtilEffectWarning(fir: FirElement): AnalysisWarning(fir){
+    override fun report(reporter: DiagnosticReporter, context: DiagnosticContext) {
+        reporter.reportOn(fir.source, Commons.Warnings.MISMATCH_UTIL_EFFECT, context)
+    }
 }
