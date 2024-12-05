@@ -208,8 +208,7 @@ fun unifySignature(env: VarEffectEnv, fvEnv: FVEffectEnv, target: Signature, con
     unifyEffect(env, target.receiverEffect, concrete.receiverEffect)
 
     for ((i, effect) in target.paramEffect) {
-        if (effect !is Var) continue
-        unifyEffect(env, effect, concrete.paramEffect[i])
+        unifyEffect(env, effect, concrete.paramEffect[i] ?: UtilEffect.N)
     }
 
     unifyFVSign(env, fvEnv, target.fvEffect, concrete.fvEffect)
@@ -221,8 +220,7 @@ fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, con
     when (target) {
         is FVEMap -> {
             for ((v, effect) in target.map) {
-                if (effect !is Var) continue
-                unifyEffect(env, effect, concrete.map[v])
+                unifyEffect(env, effect, concrete.map[v] ?: UtilEffect.N)
             }
         }
 
@@ -236,11 +234,9 @@ fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, con
     }
 }
 
-fun unifyEffect(env: VarEffectEnv, target: UtilEffect, concrete: UtilEffect?) {
+fun unifyEffect(env: VarEffectEnv, target: UtilEffect, concrete: UtilEffect) {
     if (target == concrete) return
     if (target !is Var) throw SignatureInstanceException("Mismatch effect: got $concrete, expected $target")
-
-    if (concrete == null) return
 
     env.addEffect(target, concrete)
 }

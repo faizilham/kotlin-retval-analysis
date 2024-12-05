@@ -85,8 +85,7 @@ fun withFV() {
 }
 
 
-// letUtilize :: (Def[t], (Def[t]) -> t & <U> + f) -> t & <U, N> + f
-
+// letUtilize :: (D[t], (D[t]) -> t & <U> + f) -> t & <U, N> + f
 @UEffect([UE(THIS, "U"), UE(FV, "f")])
 fun <T, R> DummyDeferred<T>.letUtilize(
     @UEffect([UE(0, "U"), UE(FV, "f")]) block: (DummyDeferred<T>) -> R
@@ -96,10 +95,10 @@ fun <T, R> DummyDeferred<T>.letUtilize(
 
 fun effectMismatch() {
     val task1 = DummyDeferred { 1 }
-    task1.letUtilize { it.cancel() }
+    val task2 = DummyDeferred { 1 }
+    task1.letUtilize { it.cancel(); task2.cancel() }
 
-    // TODO: fix this
-//    val task2 = <!UNCONSUMED_VALUE! >DummyDeferred { 1 }<! >
-//
-//    task2.letUtilize(::doNothing)
+    val task3 = <!UNCONSUMED_VALUE!>DummyDeferred { 1 }<!>
+
+    <!MISMATCH_UTIL_EFFECT!>task3.letUtilize(::doNothing)<!>
 }

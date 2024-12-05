@@ -87,11 +87,13 @@ class UtilizationAnalysis(
             }
         }
 
+        // TODO: param signature? parametric inference?
+
         val isExtension = func.receiverParameter != null
 
         return Signature (
             isClassMemberOrExtension = isExtension,
-            paramSignature = mapOf(), // TODO: param signature
+            paramSignature = mapOf(),
             paramEffect,
             receiverEffect,
             fvEffect = FVEffectSign.FVEMap(fvEffect),
@@ -155,7 +157,7 @@ class UtilizationAnalysis(
             UtilEffect.N -> return
             UtilEffect.U -> UtilLattice.UT
             UtilEffect.I -> UtilLattice.Top
-            else -> return // TODO: Var?
+            else -> return
         }
 
         for (source in valueSources) {
@@ -224,7 +226,6 @@ class UtilizationAnalysis(
         try {
             return signature.instantiateWith(argSignatures)
         } catch (e: SignatureInstanceException) {
-            log("SignatureInstanceException ${node.fir.calleeReference.name} $e")
             return null
         }
     }
