@@ -101,15 +101,14 @@ class UtilizationAnalysis(
     private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
         val signature = resolveSignature(node) ?: return
 
-//        if (logging) {
-//            log("fn ${node.fir.calleeReference.name}")
-//            log(signature.toString())
-//        }
-
         if (signature.hasEffect()) {
-            consumeReceiver(node, info, signature)
-            consumeParameters(node, info, signature)
-            consumeFreeVariables(node, info, signature)
+            val sigInstance = instantiateSignature(node, signature)
+
+            if (!sigInstance.isParametric()) {
+                consumeReceiver(node, info, sigInstance)
+                consumeParameters(node, info, sigInstance)
+                consumeFreeVariables(node, info, sigInstance)
+            } // TODO: report error otherwise?
         }
 
         if (isUtilizableType(node.fir.resolvedType)) {
@@ -174,15 +173,7 @@ class UtilizationAnalysis(
         val originalRef = (node.fir.dispatchReceiver as? FirQualifiedAccessExpression)?.calleeReference ?: return null
         val originalSymbol = originalRef.toResolvedCallableSymbol() ?: return null
 
-        val funcRef = funcData.pathInfos[node]?.getVarValue(originalSymbol) ?: return null
-
-        var signature = when (funcRef) {
-            is FuncRefValue.LambdaRef -> data.lambdaSignatures[funcRef.lambda]
-            is FuncRefValue.CallableRef -> getSignature(funcRef.ref)
-            else -> null
-        }
-
-        if (signature == null) return null
+        var signature = resolveSymbolSignature(node, originalSymbol) ?: return null
 
         // NOTE: invoking extension function causes the context object to be regarded as first argument
         //       the dispatchReceiver is no longer the context object, but the function reference
@@ -193,9 +184,22 @@ class UtilizationAnalysis(
         return signature
     }
 
+    private fun resolveSymbolSignature(node: CFGNode<*>, symbol: FirBasedSymbol<*>): Signature? {
+        val funcRef = funcData.pathInfos[node]?.getVarValue(symbol) ?: return null
+
+        return when (funcRef) {
+            is FuncRefValue.LambdaRef -> data.lambdaSignatures[funcRef.lambda]
+            is FuncRefValue.CallableRef -> getSignature(funcRef.ref)
+            else -> null
+        }
+    }
+
     private fun getSignature(fir: FirQualifiedAccessExpression) : Signature? {
         val funcSymbol = fir.calleeReference.toResolvedFunctionSymbol() ?: return null
+        return getSignature(funcSymbol)
+    }
 
+    private fun getSignature(funcSymbol: FirFunctionSymbol<*>): Signature? {
         val signature = data.cachedSignature[funcSymbol]
         if (signature != null) return signature
 
@@ -203,6 +207,29 @@ class UtilizationAnalysis(
         data.cachedSignature[funcSymbol] = newSignature
 
         return newSignature
+    }
+
+    private fun instantiateSignature(node: FunctionCallNode, signature: Signature) : Signature {
+        if (!signature.isParametric()) return signature
+
+        val arguments = node.fir.argumentList.arguments
+
+        val argSignatures = arguments.map {
+            if (!it.resolvedType.isSomeFunctionType(context.session)) null
+            else getArgumentSignature(node, it)
+        }
+
+        return signature.instantiateWith(argSignatures)
+    }
+
+    private fun getArgumentSignature(node: CFGNode<*>, argument: FirExpression): Signature? {
+        val symbol = argument.toResolvedCallableSymbol(context.session) ?: return null
+
+        if (symbol is FirFunctionSymbol<*>) {
+            return getSignature(symbol)
+        }
+
+        return resolveSymbolSignature(node, symbol)
     }
 
     /* Variable aliasing */

@@ -8,6 +8,7 @@ import com.faizilham.kotlin.retval.fir.checkers.commons.containsAnnotation
 import org.jetbrains.kotlin.backend.common.push
 import org.jetbrains.kotlin.fir.symbols.FirBasedSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirFunctionSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 
 class Signature(
     val isClassMemberOrExtension: Boolean,
@@ -18,6 +19,26 @@ class Signature(
     val fvEffect: FVEffectSign,
     val convertedReceiver: Boolean = false
 ) {
+    val effectVars : Set<Var>
+
+    init {
+        val vars = mutableSetOf<Var>()
+
+        if (receiverEffect is Var) vars.add(receiverEffect)
+
+        for ((_, effect) in paramEffect) {
+            if (effect is Var) vars.add(effect)
+        }
+
+        if (fvEffect is FVEMap) {
+            for ((_, effect) in fvEffect.map) {
+                if (effect is Var) vars.add(effect)
+            }
+        }
+
+        effectVars = vars
+    }
+
     fun convertReceiverToParameter() : Signature {
         val newParamEffect = mutableMapOf<Int, UtilEffect>()
         if (receiverEffect != UtilEffect.N) newParamEffect[0] = receiverEffect
@@ -45,7 +66,12 @@ class Signature(
     fun hasEffect() : Boolean {
         return  paramEffect.isNotEmpty() ||
                 receiverEffect != UtilEffect.N ||
+                (fvEffect is FVEVar) ||
                 (fvEffect is FVEMap && fvEffect.map.isNotEmpty())
+    }
+
+    fun isParametric() : Boolean {
+        return effectVars.isNotEmpty() || (fvEffect is FVEVar)
     }
 
     override fun toString() : String {
@@ -67,7 +93,7 @@ class Signature(
             items.add("(FV: ${fvEffect})")
         } else if (fvEffect is FVEMap){
             for ((v, effect) in fvEffect.map) {
-                items.add("(${v}: $effect)")
+                items.add("(${(v as? FirPropertySymbol)?.name ?: v}: $effect)")
             }
         }
 
@@ -150,11 +176,13 @@ sealed interface FVEffectSign {
 }
 
 /* Instantiation and Unification */
+fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
+    if (effectVars.isEmpty() && fvEffect !is FVEVar) return this
 
-fun Signature.instantiateWith(concreteReceiver: Signature?, arguments: List<Signature?>) : Signature {
-    val (env, fvEnv) = collectEffectVars()
+    val env : VarEffectEnv = mutableMapOf()
+    effectVars.forEach { it -> env[it] = mutableSetOf() }
 
-    if (env.isEmpty()) return this
+    val fvEnv : FVEffectEnv = mutableMapOf()
 
     for ((i, paramSign) in paramSignature) {
         val argSign =  arguments.getOrNull(i) ?: continue
@@ -170,24 +198,6 @@ fun Signature.instantiateWith(concreteReceiver: Signature?, arguments: List<Sign
         fvEffect = fvEffect.instantiateBy(env, fvEnv),
         convertedReceiver
     )
-}
-
-private fun Signature.collectEffectVars() : Pair<VarEffectEnv, FVEffectEnv> {
-    val env = mutableMapOf<Var, MutableSet<UtilEffect>>()
-
-    if (receiverEffect is Var) env[receiverEffect] = mutableSetOf()
-
-    for ((_, effect) in paramEffect) {
-        if (effect is Var) env[effect] = mutableSetOf()
-    }
-
-    if (fvEffect is FVEMap) {
-        for ((_, effect) in fvEffect.map) {
-            if (effect is Var) env[effect] = mutableSetOf()
-        }
-    }
-
-    return Pair(env, mutableMapOf())
 }
 
 fun unifySignature(env: VarEffectEnv, fvEnv: FVEffectEnv, target: Signature, concrete: Signature) {
@@ -253,16 +263,16 @@ fun FVEMap.instantiateBy(env: VarEffectEnv): FVEMap {
 }
 
 fun <K> Map<K, UtilEffect>.instantiateBy(env: VarEffectEnv) : Map<K, UtilEffect> {
-    return entries.associate {(k, eff) -> Pair(k, eff.instantiateBy(env)) }
+    return entries.associate {(key, eff) -> Pair(key, eff.instantiateBy(env)) }
 }
 
 fun UtilEffect.instantiateBy(env: VarEffectEnv) : UtilEffect{
     if (this !is Var) return this
-    return combine(env[this])
+    return combine(env[this]) ?: this
 }
 
-fun combine(effects: Set<UtilEffect>?) : UtilEffect {
-    if (effects.isNullOrEmpty()) return UtilEffect.Err("No Instantiation")
+fun combine(effects: Set<UtilEffect>?) : UtilEffect? {
+    if (effects.isNullOrEmpty()) return null
 
     var combinedEff : UtilEffect = UtilEffect.U
 

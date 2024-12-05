@@ -51,24 +51,31 @@ fun <A, B> with1(
     return receiver.block()
 }
 
-fun Int.abc() { }
-
-fun withAbc(x: Int, f: Int.() -> Unit) {}
+fun <T> doNothing(x: T) { }
 
 fun simple() {
+    var result : Int? = null
     val task1 = DummyDeferred { 1 }
+    result = task1.let1(::myawait)
 
-    var result = task1.let1(::myawait)
+    val task2 = DummyDeferred { 1 }
+    result = with1(task2, DummyDeferred<Int>::await)
 
-    result = with1(task1, DummyDeferred<Int>::await)
+    val awaitAlias : (DummyDeferred<Int>) -> Int? = ::myawait
 
-    withAbc(1, Int::abc)
+    val awaiter = { it: DummyDeferred<Int> -> it.let1(awaitAlias) }
 
-//    val awaitAlias : (DummyDeferred<Int>) -> Int? = ::myawait
-//
-//    result = awaitAlias(task1)
-//
-//    mycancel(task1)
+    val task3 = DummyDeferred { 1 }
+    result = task3.let1(awaiter)
+}
 
-    task1.cancel() // TODO: remove for true test
+fun withFV() {
+    val task1 = DummyDeferred { 1 }
+    val task2 = DummyDeferred { 1 }
+    val task3 = <!UNCONSUMED_VALUE!>DummyDeferred { 1 }<!>
+
+    val canceler = { it: DummyDeferred<Int> -> it.cancel(); task2.cancel() }
+    task1.let1(canceler)
+
+    task3.let1 { doNothing(it) }
 }
