@@ -262,6 +262,11 @@ class UtilizationAnalysis(
         val symbol = node.fir.calleeReference?.symbol ?: return
         val record = funcData.variableRecords[symbol] ?: return
 
+        if (record.owner != node.owner) {
+            warnings.add(InvalidatedFreeVarWarning(node.fir))
+            return
+        }
+
         val varRef = ValueRef.Variable(symbol, record)
 
         info.occludedSources.joinVal(varRef, getOccluded(info.reachingValues[varRef]))
@@ -618,5 +623,11 @@ private class UnutilizedValueWarning(fir: FirElement): AnalysisWarning(fir){
 private class MismatchUtilEffectWarning(fir: FirElement): AnalysisWarning(fir){
     override fun report(reporter: DiagnosticReporter, context: DiagnosticContext) {
         reporter.reportOn(fir.source, Commons.Warnings.MISMATCH_UTIL_EFFECT, context)
+    }
+}
+
+private class InvalidatedFreeVarWarning(fir: FirElement): AnalysisWarning(fir) {
+    override fun report(reporter: DiagnosticReporter, context: DiagnosticContext) {
+        reporter.reportOn(fir.source, Commons.Warnings.INVALIDATED_FREE_VAR, context)
     }
 }

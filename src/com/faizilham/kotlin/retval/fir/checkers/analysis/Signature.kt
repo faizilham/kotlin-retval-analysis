@@ -204,7 +204,6 @@ fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
 }
 
 fun unifySignature(env: VarEffectEnv, fvEnv: FVEffectEnv, target: Signature, concrete: Signature) {
-
     unifyEffect(env, target.receiverEffect, concrete.receiverEffect)
 
     for ((i, effect) in target.paramEffect) {

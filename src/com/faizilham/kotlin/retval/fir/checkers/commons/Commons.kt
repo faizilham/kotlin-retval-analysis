@@ -37,6 +37,7 @@ object Commons {
         val UNUSED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
         val UNCONSUMED_VALUE: KtDiagnosticFactory0 by warning0<KtExpression>()
         val MISMATCH_UTIL_EFFECT: KtDiagnosticFactory0 by warning0<KtExpression>()
+        val INVALIDATED_FREE_VAR: KtDiagnosticFactory0 by warning0<KtExpression>()
     }
 
     object Errors {
