@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.fir.analysis.checkers.context.CheckerContext
 import org.jetbrains.kotlin.fir.declarations.FirAnonymousFunction
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.getAnnotationByClassId
+import org.jetbrains.kotlin.fir.declarations.toAnnotationClassId
 import org.jetbrains.kotlin.fir.expressions.*
 import org.jetbrains.kotlin.fir.packageFqName
 import org.jetbrains.kotlin.fir.references.*
@@ -58,7 +59,7 @@ class UtilizationAnalysis(
     private fun handleFuncExit(node: FunctionExitNode, info: UtilAnalysisPathInfo) {
         // Warnings
         for ((call, util) in info.callSiteUtils) {
-            if (!util.leq(UtilLattice.RT)) {
+            if (!util.leq(UtilLattice.UT)) {
                 warnings.add(UnutilizedValueWarning(call.fir))
             }
         }
@@ -103,6 +104,20 @@ class UtilizationAnalysis(
     /* Function Call */
 
     private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
+        if (logging && node.fir.calleeReference.name.toString() in setOf("let1", "let2", "let3")) {
+
+            run {
+                val fnSymbol = node.fir.calleeReference.toResolvedFunctionSymbol() ?: return@run
+                val thisAnn = fnSymbol.resolvedReceiverTypeRef?.getAnnotationByClassId(Commons.Annotations.Util, context.session)
+
+
+
+                log("${node.fir.calleeReference.name} ${fnSymbol.parseUtilAnnotations(context.session)}")
+                log("param ${fnSymbol.valueParameterSymbols.first().resolvedReturnType.parseUtilAnnotations(context.session)}")
+
+            }
+        }
+
         val signature = resolveSignature(node) ?: return
 
         if (signature.hasEffect()) {
@@ -476,21 +491,6 @@ private sealed interface ValueSource {
     data class FreeVar(val symbol: FirBasedSymbol<*>): NonLocalSource
 }
 
-private sealed class UtilLattice(private val value: Int): Lattice<UtilLattice> {
-    data object Top: UtilLattice(3)
-    data object RT: UtilLattice(2)
-    data object UT: UtilLattice(1)
-    data object Bot: UtilLattice(0)
-
-    fun leq(other: UtilLattice) = value <= other.value
-
-    fun geq(other: UtilLattice) = value >= other.value
-
-    override fun join(other: UtilLattice) = if (this.geq(other)) this else other
-
-    override fun meet(other: UtilLattice) = if (this.geq(other)) other else this
-}
-
 // UEffect parsing
 data class ParsedEffect(
     val receiverEffect: UtilEffect,
@@ -599,14 +599,98 @@ private fun parseUECall(fir: FirExpression?) : Pair<Int, UtilEffect>? {
         "U" -> UtilEffect.U
         "N" -> UtilEffect.N
         "I" -> UtilEffect.I
+        ""  -> UtilEffect.N
         else -> UtilEffect.Var(effectStr)
     }
 
     return Pair(target, effect)
 }
 
+data class ParsedUtilAnnotations(
+    val context: UtilAnnotation?,
+    val params: Map<Int, UtilAnnotation>,
+    val retVal: UtilAnnotation
+)
+
+private fun FirFunctionSymbol<*>.parseUtilAnnotations(session: FirSession) : ParsedUtilAnnotations {
+    val ctx = resolvedReceiverTypeRef?.annotations?.getUtilAnnotation(session)
+
+    val params = mutableMapOf<Int, UtilAnnotation>()
+
+    for ((i, valParam) in valueParameterSymbols.withIndex()) {
+        val utilAnn = valParam.resolvedReturnTypeRef.annotations.getUtilAnnotation(session)
+
+        if (utilAnn is UtilAnnotation.Val && utilAnn.value == UtilLattice.Top) {
+            continue
+        }
+
+        params[i] = utilAnn
+    }
+
+    val retVal = resolvedReturnTypeRef.annotations.getUtilAnnotation(session)
+
+    return ParsedUtilAnnotations(ctx, params, retVal)
+}
+
+private fun ConeKotlinType.parseUtilAnnotations(session: FirSession) : ParsedUtilAnnotations? {
+    if (!isSomeFunctionType(session)) return null
+
+    val paramSize: Int
+    val paramOffset: Int
+    val ctx : UtilAnnotation?
+
+    if (isExtensionFunctionType) {
+        paramSize = typeArguments.size - 2
+        paramOffset = 1
+        ctx = typeArguments.first().type?.getUtilAnnotation(session)
+    } else {
+        paramSize = typeArguments.size - 1
+        paramOffset = 0
+        ctx = null
+    }
+
+    val params = mutableMapOf<Int, UtilAnnotation>()
+
+    for (i in 0..<paramSize) {
+        val util = typeArguments.getOrNull(i + paramOffset)?.type?.getUtilAnnotation(session)
+
+        if (util == null || (util is UtilAnnotation.Val && util.value == UtilLattice.Top)) {
+            continue
+        }
+
+        params[i] = util
+    }
+
+    val retVal = typeArguments.last().type?.getUtilAnnotation(session) ?: UtilAnnotation.Val(UtilLattice.Top)
+
+    return ParsedUtilAnnotations(ctx, params, retVal)
+}
+
 private fun isUtilizableType(session: FirSession, type: ConeKotlinType) : Boolean {
     return type.hasMustConsumeAnnotation(session)
+}
+
+private fun ConeKotlinType.getUtilAnnotation(session: FirSession): UtilAnnotation {
+    return this.customAnnotations.getUtilAnnotation(session)
+}
+
+private fun List<FirAnnotation>.getUtilAnnotation(session: FirSession) : UtilAnnotation {
+    var firstArg : String? = null
+    for (annotation in this){
+        if (annotation.toAnnotationClassId(session) != Commons.Annotations.Util) continue
+        val args = (annotation as? FirAnnotationCall)?.arguments
+        firstArg = (args?.firstOrNull() as? FirLiteralExpression<*>)?.value as? String
+        break
+    }
+
+    when(firstArg) {
+        null -> return UtilAnnotation.Val(UtilLattice.Top)
+        "" -> return UtilAnnotation.Val(UtilLattice.Top)
+        "0" -> return UtilAnnotation.Val(UtilLattice.NU)
+        "1" -> return UtilAnnotation.Val(UtilLattice.UT)
+        "0|1" -> return UtilAnnotation.Val(UtilLattice.Top)
+        else -> return UtilAnnotation.Var(firstArg)
+    }
 }
 
 // Warnings

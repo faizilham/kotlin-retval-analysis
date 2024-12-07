@@ -23,6 +23,10 @@ object Commons {
             "FV" to -2
         )
 
+        val Util = ClassId(PACKAGE_FQN, Name.identifier("Util"))
+        val UtilFq = Util.asSingleFqName()
+
+
         val MayUse = ClassId(PACKAGE_FQN, Name.identifier("MayUse"))
         val AnyUse = ClassId(PACKAGE_FQN, Name.identifier("AnyUse"))
     }

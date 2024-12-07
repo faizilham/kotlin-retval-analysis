@@ -17,26 +17,47 @@ class Signature(
     val paramEffect : Map<Int, UtilEffect>,
     val receiverEffect: UtilEffect,
     val fvEffect: FVEffectSign,
-    val convertedReceiver: Boolean = false
+    val convertedReceiver: Boolean = false,
+
+    val contextUtilAnnotation: UtilAnnotation? = null,
+    val paramUtilAnnotations: Map<Int, UtilAnnotation> = mapOf(),
+    val returnUtilAnnotation: UtilAnnotation = UtilAnnotation.Val(UtilLattice.Top)
 ) {
     val effectVars : Set<Var>
+    val utilVars: Set<UtilAnnotation.Var>
 
     init {
-        val vars = mutableSetOf<Var>()
+        val effVars = mutableSetOf<Var>()
 
-        if (receiverEffect is Var) vars.add(receiverEffect)
+        if (receiverEffect is Var) effVars.add(receiverEffect)
 
         for ((_, effect) in paramEffect) {
-            if (effect is Var) vars.add(effect)
+            if (effect is Var) effVars.add(effect)
         }
 
         if (fvEffect is FVEMap) {
             for ((_, effect) in fvEffect.map) {
-                if (effect is Var) vars.add(effect)
+                if (effect is Var) effVars.add(effect)
             }
         }
 
-        effectVars = vars
+        effectVars = effVars
+
+        val utilVars = mutableSetOf<UtilAnnotation.Var>()
+
+        if (contextUtilAnnotation is UtilAnnotation.Var) {
+            utilVars.add(contextUtilAnnotation)
+        }
+
+        if (returnUtilAnnotation is UtilAnnotation.Var) {
+            utilVars.add(returnUtilAnnotation)
+        }
+
+        for ((_, util) in paramUtilAnnotations) {
+            if (util is UtilAnnotation.Var) utilVars.add(util)
+        }
+
+        this.utilVars = utilVars
     }
 
     fun convertReceiverToParameter() : Signature {
@@ -71,7 +92,7 @@ class Signature(
     }
 
     fun isParametric() : Boolean {
-        return effectVars.isNotEmpty() || (fvEffect is FVEVar)
+        return effectVars.isNotEmpty() || (fvEffect is FVEVar) // || utilVars.isNotEmpty()
     }
 
     override fun toString() : String {
@@ -119,6 +140,34 @@ class Signature(
     }
 }
 
+/* Util Lattice */
+sealed class UtilLattice(private val value: Int): Lattice<UtilLattice> {
+    data object Top: UtilLattice(2)
+    data object NU: UtilLattice(1)
+    data object UT: UtilLattice(1)
+    data object Bot: UtilLattice(0)
+
+    fun leq(other: UtilLattice) = value < other.value || this == other
+
+    fun geq(other: UtilLattice) = value > other.value || this == other
+
+    override fun join(other: UtilLattice): UtilLattice{
+        if (this.value == other.value && this != other) return Top
+
+        return if (this.geq(other)) this else other
+    }
+
+    override fun meet(other: UtilLattice): UtilLattice {
+        if (this.value == other.value && this != other) return Top
+
+        return if (this.geq(other)) other else this
+    }
+}
+
+sealed interface UtilAnnotation {
+    data class Val(val value: UtilLattice): UtilAnnotation
+    data class Var(val name: String): UtilAnnotation
+}
 
 /* Utilization Effect */
 sealed interface UtilEffect {
@@ -182,14 +231,12 @@ class SignatureInstanceException(message: String) : Exception(message)
 fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
     if (effectVars.isEmpty() && fvEffect !is FVEVar) return this
 
-    val env : VarEffectEnv = mutableMapOf()
-    effectVars.forEach { it -> env[it] = mutableSetOf() }
-
-    val fvEnv : FVEffectEnv = mutableMapOf()
+    val env = InstantiationEnv()
+    effectVars.forEach { env.eff[it] = mutableSetOf() }
 
     for ((i, paramSign) in paramSignature) {
         val argSign =  arguments.getOrNull(i) ?: continue
-        unifySignature(env, fvEnv, paramSign, argSign)
+        unifySignature(env, paramSign, argSign)
     }
 
     return Signature(
@@ -198,22 +245,22 @@ fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
 
         paramEffect = paramEffect.instantiateBy(env),
         receiverEffect = receiverEffect.instantiateBy(env),
-        fvEffect = fvEffect.instantiateBy(env, fvEnv),
+        fvEffect = fvEffect.instantiateBy(env),
         convertedReceiver
     )
 }
 
-fun unifySignature(env: VarEffectEnv, fvEnv: FVEffectEnv, target: Signature, concrete: Signature) {
+fun unifySignature(env: InstantiationEnv, target: Signature, concrete: Signature) {
     unifyEffect(env, target.receiverEffect, concrete.receiverEffect)
 
     for ((i, effect) in target.paramEffect) {
         unifyEffect(env, effect, concrete.paramEffect[i] ?: UtilEffect.N)
     }
 
-    unifyFVSign(env, fvEnv, target.fvEffect, concrete.fvEffect)
+    unifyFVSign(env, target.fvEffect, concrete.fvEffect)
 }
 
-fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, concrete: FVEffectSign) {
+fun unifyFVSign(env: InstantiationEnv, target: FVEffectSign, concrete: FVEffectSign) {
     if (concrete !is FVEMap) return
 
     when (target) {
@@ -224,52 +271,39 @@ fun unifyFVSign(env: VarEffectEnv, fvEnv: FVEffectEnv, target: FVEffectSign, con
         }
 
         is FVEVar -> {
-            if (target in fvEnv && fvEnv[target] != concrete) {
+            if (target in env.fv && env.fv[target] != concrete) {
                 throw SignatureInstanceException("Mismatch FV var $target")
             }
 
-            fvEnv[target] = concrete
+            env.fv[target] = concrete
         }
     }
 }
 
-fun unifyEffect(env: VarEffectEnv, target: UtilEffect, concrete: UtilEffect) {
+fun unifyEffect(env: InstantiationEnv, target: UtilEffect, concrete: UtilEffect) {
     if (target == concrete) return
     if (target !is Var) throw SignatureInstanceException("Mismatch effect: got $concrete, expected $target")
 
     env.addEffect(target, concrete)
 }
 
-
-typealias VarEffectEnv = MutableMap<Var, MutableSet<UtilEffect>>
-
-fun VarEffectEnv.addEffect(key: Var, effect: UtilEffect) {
-    if (key !in this) {
-        this[key] = mutableSetOf()
-    }
-
-    this[key]?.add(effect)
-}
-
-typealias FVEffectEnv = MutableMap<FVEVar, FVEMap>
-
-fun FVEffectSign.instantiateBy(env: VarEffectEnv, fvEnv: FVEffectEnv) : FVEffectSign {
+fun FVEffectSign.instantiateBy(env: InstantiationEnv) : FVEffectSign {
     if (this is FVEMap) return this.instantiateBy(env)
 
-    return fvEnv[this]?.instantiateBy(env) ?: FVEMap()
+    return env.fv[this]?.instantiateBy(env) ?: FVEMap()
 }
 
-fun FVEMap.instantiateBy(env: VarEffectEnv): FVEMap {
+fun FVEMap.instantiateBy(env: InstantiationEnv): FVEMap {
     return FVEMap(map.instantiateBy(env))
 }
 
-fun <K> Map<K, UtilEffect>.instantiateBy(env: VarEffectEnv) : Map<K, UtilEffect> {
+fun <K> Map<K, UtilEffect>.instantiateBy(env: InstantiationEnv) : Map<K, UtilEffect> {
     return entries.associate {(key, eff) -> Pair(key, eff.instantiateBy(env)) }
 }
 
-fun UtilEffect.instantiateBy(env: VarEffectEnv) : UtilEffect{
+fun UtilEffect.instantiateBy(env: InstantiationEnv) : UtilEffect{
     if (this !is Var) return this
-    return combine(env[this]) ?: UtilEffect.N
+    return combine(env.eff[this]) ?: UtilEffect.N
 }
 
 fun combine(effects: Set<UtilEffect>?) : UtilEffect? {
@@ -282,6 +316,21 @@ fun combine(effects: Set<UtilEffect>?) : UtilEffect? {
     }
 
     return combinedEff
+}
+
+/* Env */
+
+data class InstantiationEnv(
+    val eff: MutableMap<Var, MutableSet<UtilEffect>> = mutableMapOf(),
+    val fv: MutableMap<FVEVar, FVEMap> = mutableMapOf()
+) {
+    fun addEffect(key: Var, effect: UtilEffect) {
+        if (key !in eff) {
+            eff[key] = mutableSetOf()
+        }
+
+        eff[key]?.add(effect)
+    }
 }
 
 /* Helper */
