@@ -46,12 +46,35 @@ class UtilizationAnalysis(
         val info = propagatePathInfo(node)
 
         when {
+            node is FunctionEnterNode -> handleFuncEnter(node, info)
             node is FunctionExitNode -> handleFuncExit(node, info)
             node is FunctionCallNode -> handleFuncCall(node, info)
             node is VariableDeclarationNode -> handleVarDeclaration(node, info)
             node is VariableAssignmentNode -> handleVarAssignment(node, info)
             node.isReturnNode() -> handleReturnNode(node, info)
             node.isIndirectValueSource() -> handleIndirectValueSource(node, info)
+        }
+    }
+
+    /* Function Enter */
+    private fun handleFuncEnter(node: FunctionEnterNode, info: UtilAnalysisPathInfo) {
+        if (node.fir is FirAnonymousFunction) return
+        val signature = getSignature(node.fir.symbol) ?: return
+
+
+        val contextUtil = signature.contextUtilAnnotation
+        if (contextUtil is UtilAnnotation.Val && contextUtil.value != UtilLattice.Top) {
+            info.nonLocalUtils[ValueSource.ThisRef] = contextUtil.value
+        }
+
+        for ((i, param) in node.fir.valueParameters.withIndex()) {
+            val paramUtil = signature.paramUtilAnnotations[i]
+            if (paramUtil !is UtilAnnotation.Val || paramUtil.value == UtilLattice.Top) {
+                continue
+            }
+
+            val source = ValueSource.Params(param.symbol, i)
+            info.nonLocalUtils[source] = paramUtil.value
         }
     }
 
@@ -98,6 +121,10 @@ class UtilizationAnalysis(
             paramEffect,
             receiverEffect,
             fvEffect = FVEffectSign.FVEMap(fvEffect),
+
+            contextUtilAnnotation = null, //TODO: fix
+            paramUtilAnnotations = mapOf(),
+            returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
         )
     }
 
@@ -105,12 +132,9 @@ class UtilizationAnalysis(
 
     private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
         if (logging && node.fir.calleeReference.name.toString() in setOf("let1", "let2", "let3")) {
-
             run {
                 val fnSymbol = node.fir.calleeReference.toResolvedFunctionSymbol() ?: return@run
                 val thisAnn = fnSymbol.resolvedReceiverTypeRef?.getAnnotationByClassId(Commons.Annotations.Util, context.session)
-
-
 
                 log("${node.fir.calleeReference.name} ${fnSymbol.parseUtilAnnotations(context.session)}")
                 log("param ${fnSymbol.valueParameterSymbols.first().resolvedReturnType.parseUtilAnnotations(context.session)}")
@@ -166,12 +190,11 @@ class UtilizationAnalysis(
     }
 
     private fun applyEffect(valueSources: SetLat<ValueSource>, effect: UtilEffect, info: UtilAnalysisPathInfo) {
-        if (effect == UtilEffect.N) return
-
         val utilization = when(effect) {
             UtilEffect.N -> return
             UtilEffect.U -> UtilLattice.UT
-            UtilEffect.I -> UtilLattice.Top
+            UtilEffect.I -> UtilLattice.NU
+            UtilEffect.X -> UtilLattice.Top
             else -> return
         }
 
@@ -514,6 +537,10 @@ private fun buildSignature(session: FirSession, funcSymbol: FirFunctionSymbol<*>
         paramEffect = effects.paramEffect,
         receiverEffect = effects.receiverEffect,
         fvEffect = effects.fvEffect,
+
+        contextUtilAnnotation = null, //TODO: fix
+        paramUtilAnnotations = mapOf(),
+        returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
     )
 }
 
@@ -534,6 +561,10 @@ private fun buildParamSignature(session:FirSession, fnSymbol: FirFunctionSymbol<
             paramEffect = effects.paramEffect,
             receiverEffect = effects.receiverEffect,
             fvEffect = effects.fvEffect,
+
+            contextUtilAnnotation = null, //TODO: fix
+            paramUtilAnnotations = mapOf(),
+            returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
         )
 
         paramSignature[i] = signature

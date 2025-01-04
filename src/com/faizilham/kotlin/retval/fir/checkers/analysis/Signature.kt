@@ -17,11 +17,12 @@ class Signature(
     val paramEffect : Map<Int, UtilEffect>,
     val receiverEffect: UtilEffect,
     val fvEffect: FVEffectSign,
-    val convertedReceiver: Boolean = false,
 
-    val contextUtilAnnotation: UtilAnnotation? = null,
-    val paramUtilAnnotations: Map<Int, UtilAnnotation> = mapOf(),
-    val returnUtilAnnotation: UtilAnnotation = UtilAnnotation.Val(UtilLattice.Top)
+    val contextUtilAnnotation: UtilAnnotation?,
+    val paramUtilAnnotations: Map<Int, UtilAnnotation>,
+    val returnUtilAnnotation: UtilAnnotation,
+
+    val convertedReceiver: Boolean = false
 ) {
     val effectVars : Set<Var>
     val utilVars: Set<UtilAnnotation.Var>
@@ -80,6 +81,11 @@ class Signature(
             paramEffect = newParamEffect,
             receiverEffect = UtilEffect.N,
             fvEffect,
+
+            contextUtilAnnotation = null, //TODO: fix
+            paramUtilAnnotations = mapOf(),
+            returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
+
             convertedReceiver = true
         )
     }
@@ -174,6 +180,7 @@ sealed interface UtilEffect {
     data object U : UtilEffect
     data object N : UtilEffect
     data object I : UtilEffect
+    data object X : UtilEffect
     data class Var(val name: String): UtilEffect {
         override fun toString(): String {
             return "\$$name"
@@ -182,26 +189,12 @@ sealed interface UtilEffect {
 
 //    data class Err(val message: String): UtilEffect
 
-    operator fun plus(other: UtilEffect): UtilEffect {
-//        if (this is Err) return this
-//        if (other is Err) return other
-
-        if (this == other) return this
-        if (this == I || other == I) return I
-        if (this == U || other == U) return U
-
-        if (this is Var) return this
-        if (other is Var) return other
-
-        return N
-    }
-
     operator fun times(other: UtilEffect): UtilEffect {
 //        if (this is Err) return this
 //        if (other is Err) return other
 
         if (this == other) return this
-        if (this == I || other == I) return I
+        if (this == X || other == X) return X
         if (this == N || other == N) return N
 
         if (this is Var) return this
@@ -246,7 +239,12 @@ fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
         paramEffect = paramEffect.instantiateBy(env),
         receiverEffect = receiverEffect.instantiateBy(env),
         fvEffect = fvEffect.instantiateBy(env),
-        convertedReceiver
+
+        contextUtilAnnotation = null, //TODO: fix
+        paramUtilAnnotations = mapOf(),
+        returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
+
+        convertedReceiver,
     )
 }
 
@@ -322,7 +320,8 @@ fun combine(effects: Set<UtilEffect>?) : UtilEffect? {
 
 data class InstantiationEnv(
     val eff: MutableMap<Var, MutableSet<UtilEffect>> = mutableMapOf(),
-    val fv: MutableMap<FVEVar, FVEMap> = mutableMapOf()
+    val fv: MutableMap<FVEVar, FVEMap> = mutableMapOf(),
+    val util: MutableMap<UtilAnnotation.Var, UtilAnnotation.Val> = mutableMapOf()
 ) {
     fun addEffect(key: Var, effect: UtilEffect) {
         if (key !in eff) {

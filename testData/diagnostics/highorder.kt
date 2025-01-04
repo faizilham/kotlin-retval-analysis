@@ -37,8 +37,22 @@ fun mycancel(x: DummyDeferred<*>) {
 }
 
 @UEffect([UE(THIS, "a"), UE(FV, "f")])
-fun<A, B> A.let1(
-    @UEffect([UE(0, "a"), UE(FV, "f")]) f: (A) -> B
+fun<A, B> (@Util("u") A).let1(
+    @UEffect([UE(0, "a"), UE(FV, "f")]) f: (@Util("u") A) -> @Util("b") B
+): @Util("b") B {
+    return f(this)
+}
+
+@UEffect([UE(THIS, "a"), UE(FV, "f")])
+fun<A, B> (@Util("u") A).let2(
+    @UEffect([UE(THIS, "a"), UE(FV, "f")]) f: @Util("u") (@Util("u") A).() -> @Util("1") B
+): B {
+    return f(this)
+}
+
+@UEffect([UE(THIS, "a"), UE(FV, "f")])
+fun<A, B> (@Util("u") A).let3(
+    @UEffect([UE(THIS, "a"), UE(FV, "f")]) f: (@Util("u") A).(@Util("1") A) -> @Util("0") B
 ): B {
     return f(this)
 }
@@ -82,13 +96,17 @@ fun withFV() {
     val task4 = DummyDeferred { 1 }
     val task5 = DummyDeferred { 1 }
     task4.let1 { it.cancel(); task5.cancel() }
+
+    1.let2 { }
+    1.let3 { }
 }
 
 
 // letUtilize :: (D[t], (D[t]) -> t & <U> + f) -> t & <U, N> + f
+
 @UEffect([UE(THIS, "U"), UE(FV, "f")])
-fun <T, R> DummyDeferred<T>.letUtilize(
-    @UEffect([UE(0, "U"), UE(FV, "f")]) block: (DummyDeferred<T>) -> R
+fun <T, R> (@Util("u") DummyDeferred<T>).letUtilize(
+    @UEffect([UE(0, "U"), UE(FV, "f")]) block: (@Util("u") DummyDeferred<T>) -> R
 ): R {
     return block(this)
 }
