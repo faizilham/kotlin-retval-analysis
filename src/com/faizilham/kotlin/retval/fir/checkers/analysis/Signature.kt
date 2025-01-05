@@ -98,7 +98,7 @@ class Signature(
     }
 
     fun isParametric() : Boolean {
-        return effectVars.isNotEmpty() || (fvEffect is FVEVar) // || utilVars.isNotEmpty()
+        return effectVars.isNotEmpty() || (fvEffect is FVEVar) || utilVars.isNotEmpty()
     }
 
     override fun toString() : String {
@@ -136,6 +136,16 @@ class Signature(
             strs.push("PS={$paramSignStr}")
         }
 
+        if (contextUtilAnnotation != null) {
+            strs.add("(THIS_U: $contextUtilAnnotation)")
+        }
+
+        for ((i, util) in paramUtilAnnotations) {
+            strs.add("(${i}_U: $util)")
+        }
+
+        strs.add("Ret_U: $returnUtilAnnotation")
+
         if (items.isNotEmpty()) {
             strs.push("EFF={${items.joinToString(separator = " ")}}")
         } else {
@@ -171,8 +181,17 @@ sealed class UtilLattice(private val value: Int): Lattice<UtilLattice> {
 }
 
 sealed interface UtilAnnotation {
-    data class Val(val value: UtilLattice): UtilAnnotation
-    data class Var(val name: String): UtilAnnotation
+    data class Val(val value: UtilLattice): UtilAnnotation {
+        override fun toString(): String {
+            return "@$value"
+        }
+    }
+
+    data class Var(val name: String, val fromId: Int, val fromLambda: Boolean = false): UtilAnnotation {
+        override fun toString(): String {
+            return "~$name"
+        }
+    }
 }
 
 /* Utilization Effect */
@@ -187,12 +206,7 @@ sealed interface UtilEffect {
         }
     }
 
-//    data class Err(val message: String): UtilEffect
-
     operator fun times(other: UtilEffect): UtilEffect {
-//        if (this is Err) return this
-//        if (other is Err) return other
-
         if (this == other) return this
         if (this == X || other == X) return X
         if (this == N || other == N) return N
@@ -221,50 +235,55 @@ sealed interface FVEffectSign {
 
 class SignatureInstanceException(message: String) : Exception(message)
 
-fun Signature.instantiateWith(arguments: List<Signature?>) : Signature {
-    if (effectVars.isEmpty() && fvEffect !is FVEVar) return this
-
+fun Signature.instantiateWith(arguments: List<Signature?>, contextUtil: UtilAnnotation?, paramUtils: List<UtilAnnotation?>) : Pair<Signature, InstantiationEnv> {
     val env = InstantiationEnv()
     effectVars.forEach { env.eff[it] = mutableSetOf() }
 
     for ((i, paramSign) in paramSignature) {
-        val argSign =  arguments.getOrNull(i) ?: continue
-        unifySignature(env, paramSign, argSign)
+        val argSign = arguments.getOrNull(i) ?: continue
+        unify(env, paramSign, argSign)
     }
 
-    return Signature(
-        isClassMemberOrExtension,
-        paramSignature,
+    if (contextUtilAnnotation != null && contextUtil != null) {
+        unify(env, contextUtilAnnotation, contextUtil)
+    }
 
-        paramEffect = paramEffect.instantiateBy(env),
-        receiverEffect = receiverEffect.instantiateBy(env),
-        fvEffect = fvEffect.instantiateBy(env),
+    for ((i, paramUtilAnno) in paramUtilAnnotations) {
+        val paramUtil = paramUtils.getOrNull(i) ?: continue
+        unify(env, paramUtilAnno, paramUtil)
+    }
 
-        contextUtilAnnotation = null, //TODO: fix
-        paramUtilAnnotations = mapOf(),
-        returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
-
-        convertedReceiver,
-    )
+    return Pair(instantiateBy(env), env)
 }
 
-fun unifySignature(env: InstantiationEnv, target: Signature, concrete: Signature) {
-    unifyEffect(env, target.receiverEffect, concrete.receiverEffect)
+fun unify(env: InstantiationEnv, target: Signature, concrete: Signature) {
+    unify(env, target.receiverEffect, concrete.receiverEffect)
+
+    if (target.contextUtilAnnotation != null && concrete.contextUtilAnnotation != null) {
+        unify(env, target.contextUtilAnnotation, concrete.contextUtilAnnotation)
+    }
 
     for ((i, effect) in target.paramEffect) {
-        unifyEffect(env, effect, concrete.paramEffect[i] ?: UtilEffect.N)
+        unify(env, effect, concrete.paramEffect[i] ?: UtilEffect.N)
     }
 
-    unifyFVSign(env, target.fvEffect, concrete.fvEffect)
+    for ((i, paramUtilAnno) in target.paramUtilAnnotations) {
+        val concreteUtilAnno = concrete.paramUtilAnnotations[i] ?: continue
+        unify(env, paramUtilAnno, concreteUtilAnno)
+    }
+
+    unify(env, target.fvEffect, concrete.fvEffect)
+
+    unify(env, target.returnUtilAnnotation, concrete.returnUtilAnnotation)
 }
 
-fun unifyFVSign(env: InstantiationEnv, target: FVEffectSign, concrete: FVEffectSign) {
+fun unify(env: InstantiationEnv, target: FVEffectSign, concrete: FVEffectSign) {
     if (concrete !is FVEMap) return
 
     when (target) {
         is FVEMap -> {
             for ((v, effect) in target.map) {
-                unifyEffect(env, effect, concrete.map[v] ?: UtilEffect.N)
+                unify(env, effect, concrete.map[v] ?: UtilEffect.N)
             }
         }
 
@@ -278,11 +297,40 @@ fun unifyFVSign(env: InstantiationEnv, target: FVEffectSign, concrete: FVEffectS
     }
 }
 
-fun unifyEffect(env: InstantiationEnv, target: UtilEffect, concrete: UtilEffect) {
+fun unify(env: InstantiationEnv, target: UtilEffect, concrete: UtilEffect) {
     if (target == concrete) return
     if (target !is Var) throw SignatureInstanceException("Mismatch effect: got $concrete, expected $target")
 
     env.addEffect(target, concrete)
+}
+
+fun unify(env: InstantiationEnv, target: UtilAnnotation, concrete: UtilAnnotation) {
+    if (target is UtilAnnotation.Val) {
+        if (concrete is UtilAnnotation.Val && !concrete.value.leq(target.value)) {
+            throw SignatureInstanceException("Mismatch utilization: got $concrete, expected $target")
+        } else if (concrete is UtilAnnotation.Var) {
+            unify(env, concrete, target)
+        }
+    } else if (target is UtilAnnotation.Var && concrete is UtilAnnotation.Val) {
+        env.addUtil(target, concrete)
+    }
+}
+
+fun Signature.instantiateBy(env: InstantiationEnv) : Signature {
+    return Signature(
+        isClassMemberOrExtension,
+        paramSignature = paramSignature.entries.associate { (i, sign) -> Pair(i, sign.instantiateBy(env)) },
+
+        paramEffect = paramEffect.instantiateEff(env),
+        receiverEffect = receiverEffect.instantiateBy(env),
+        fvEffect = fvEffect.instantiateBy(env),
+
+        contextUtilAnnotation = contextUtilAnnotation.instantiateBy(env),
+        paramUtilAnnotations = paramUtilAnnotations.instantiateUtil(env),
+        returnUtilAnnotation = returnUtilAnnotation.instantiateBy(env) ?: UtilAnnotation.Val(UtilLattice.Top),
+
+        convertedReceiver,
+    )
 }
 
 fun FVEffectSign.instantiateBy(env: InstantiationEnv) : FVEffectSign {
@@ -292,28 +340,37 @@ fun FVEffectSign.instantiateBy(env: InstantiationEnv) : FVEffectSign {
 }
 
 fun FVEMap.instantiateBy(env: InstantiationEnv): FVEMap {
-    return FVEMap(map.instantiateBy(env))
+    return FVEMap(map.instantiateEff(env))
 }
 
-fun <K> Map<K, UtilEffect>.instantiateBy(env: InstantiationEnv) : Map<K, UtilEffect> {
+fun <K> Map<K, UtilEffect>.instantiateEff(env: InstantiationEnv) : Map<K, UtilEffect> {
     return entries.associate {(key, eff) -> Pair(key, eff.instantiateBy(env)) }
+}
+
+fun Map<Int, UtilAnnotation>.instantiateUtil(env: InstantiationEnv) : Map<Int, UtilAnnotation> {
+    return entries.associate {(key, eff) -> Pair(key, eff.instantiateBy(env) ?: UtilAnnotation.Val(UtilLattice.Top)) }
 }
 
 fun UtilEffect.instantiateBy(env: InstantiationEnv) : UtilEffect{
     if (this !is Var) return this
-    return combine(env.eff[this]) ?: UtilEffect.N
-}
 
-fun combine(effects: Set<UtilEffect>?) : UtilEffect? {
-    if (effects.isNullOrEmpty()) return null
+    val effects = env.eff[this]
+    if (effects.isNullOrEmpty()) return UtilEffect.N
 
-    var combinedEff : UtilEffect = UtilEffect.U
-
-    for (effect in effects) {
-        combinedEff *= effect
+    if (effects.size == 1) {
+        return effects.first()
     }
 
-    return combinedEff
+    throw SignatureInstanceException("Multiple instantiation of effect variable $this")
+}
+
+fun UtilAnnotation?.instantiateBy(env: InstantiationEnv) : UtilAnnotation? {
+    if (this == null) return null
+    if (this is UtilAnnotation.Var) {
+        return env.util[this]
+    }
+
+    return this
 }
 
 /* Env */
@@ -329,6 +386,16 @@ data class InstantiationEnv(
         }
 
         eff[key]?.add(effect)
+    }
+
+    fun addUtil(target: UtilAnnotation.Var, concrete: UtilAnnotation.Val) {
+        if (target !in util) {
+            util[target] = concrete
+            return
+        }
+
+        if (!concrete.value.leq(util[target]!!.value))
+            throw SignatureInstanceException("Incompatible utilization instantiation for variable $target, prev: ${util[target]}, new: ${concrete}")
     }
 }
 

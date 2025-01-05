@@ -25,7 +25,7 @@ annotation class UE(val target: Int, val effect: String)
 annotation class UEffect(val effects: Array<UE>)
 
 // value: "0" -> NU, "1" -> UT, "" -> Top, "0|1" -> Top, otherwise variable name
-@Target(AnnotationTarget.TYPE)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.TYPE)
 annotation class Util(val value: String)
 
 @Target(AnnotationTarget.TYPE)

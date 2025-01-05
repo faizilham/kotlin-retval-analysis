@@ -58,9 +58,24 @@ class UtilizationAnalysis(
 
     /* Function Enter */
     private fun handleFuncEnter(node: FunctionEnterNode, info: UtilAnalysisPathInfo) {
-        if (node.fir is FirAnonymousFunction) return
-        val signature = getSignature(node.fir.symbol) ?: return
+        if (node.fir is FirAnonymousFunction) {
+            info.nonLocalUtils[ValueSource.ThisRef] = UtilLattice.Bot
+            val thisUtil = UtilAnnotation.Var("this", node.owner.hashCode(), true)
+            data.utilAnnotationVars[thisUtil] = UtilLattice.Bot
 
+            for ((i, param) in node.fir.valueParameters.withIndex()) {
+                val source = ValueSource.Params(param.symbol, i)
+                info.nonLocalUtils[source] = UtilLattice.Bot
+
+                val utilVar = UtilAnnotation.Var(i.toString(), node.owner.hashCode(), true)
+                data.utilAnnotationVars[utilVar] = UtilLattice.Bot
+            }
+
+            return
+        }
+
+        // initialize param util with prerequisite utilization
+        val signature = getSignature(node.fir.symbol) ?: return
 
         val contextUtil = signature.contextUtilAnnotation
         if (contextUtil is UtilAnnotation.Val && contextUtil.value != UtilLattice.Top) {
@@ -91,29 +106,53 @@ class UtilizationAnalysis(
         val currentFunction = node.fir
 
         if (currentFunction is FirAnonymousFunction) {
-            data.lambdaSignatures[currentFunction] = buildLambdaSignature(currentFunction, info)
+            data.lambdaSignatures[currentFunction] = buildLambdaSignature(node, currentFunction, info)
         }
     }
 
-    private fun buildLambdaSignature(func: FirFunction, info: UtilAnalysisPathInfo): Signature {
+    private fun buildLambdaSignature(node:CFGNode<*>, func: FirFunction, info: UtilAnalysisPathInfo): Signature {
         var receiverEffect : UtilEffect = UtilEffect.N
         val paramEffect = mutableMapOf<Int, UtilEffect>()
         val fvEffect = mutableMapOf<FirBasedSymbol<*>, UtilEffect>()
 
 
         for ((nonlocal, utilization) in info.nonLocalUtils) {
-            if (!utilization.leq(UtilLattice.UT)) continue
+            val original = getOriginalUtilization(node, nonlocal)
+            val effect = getEffectFromUtilization(original, utilization)
+            if (effect == UtilEffect.N) continue
 
             when (nonlocal) {
-                is ValueSource.ThisRef -> receiverEffect = UtilEffect.U
-                is ValueSource.Params -> paramEffect[nonlocal.index] = UtilEffect.U
-                is ValueSource.FreeVar -> fvEffect[nonlocal.symbol] = UtilEffect.U
+                is ValueSource.ThisRef -> receiverEffect = effect
+                is ValueSource.Params -> {
+                    paramEffect[nonlocal.index] = effect
+                }
+                is ValueSource.FreeVar -> fvEffect[nonlocal.symbol] = effect
             }
         }
 
-        // TODO: param signature? parametric inference?
+        // TODO: parametric inference?
 
         val isExtension = func.receiverParameter != null
+
+        //
+        val contextUtilVar = UtilAnnotation.Var("this", node.owner.hashCode(), true)
+        val contextUtilAnnotation = data.utilAnnotationVars[contextUtilVar]?.let {
+            if (!isExtension) null
+            else if (it == UtilLattice.Bot) UtilAnnotation.Val(UtilLattice.Top)
+            else UtilAnnotation.Val(it)
+        }
+
+        val paramUtilAnnotations = mutableMapOf<Int, UtilAnnotation>()
+
+        for ((i, param) in func.valueParameters.withIndex()) {
+            val paramVarAnno = UtilAnnotation.Var(i.toString(), node.owner.hashCode(), true)
+            val paramUtil = data.utilAnnotationVars[paramVarAnno]?.let {
+                if (it == UtilLattice.Bot) UtilAnnotation.Val(UtilLattice.Top)
+                else UtilAnnotation.Val(it)
+            }
+
+            if (paramUtil != null) paramUtilAnnotations[i] = paramUtil
+        }
 
         return Signature (
             isClassMemberOrExtension = isExtension,
@@ -122,43 +161,60 @@ class UtilizationAnalysis(
             receiverEffect,
             fvEffect = FVEffectSign.FVEMap(fvEffect),
 
-            contextUtilAnnotation = null, //TODO: fix
-            paramUtilAnnotations = mapOf(),
-            returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
+            contextUtilAnnotation = contextUtilAnnotation,
+            paramUtilAnnotations = paramUtilAnnotations,
+            returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top)
         )
+    }
+
+    private fun getOriginalUtilization(node: CFGNode<*>, source: ValueSource.NonLocalSource) : UtilLattice {
+        when (source) {
+            is ValueSource.FreeVar -> return UtilLattice.Top
+            is ValueSource.ThisRef -> {
+                val utilAnno = UtilAnnotation.Var("this", node.owner.hashCode(), true)
+                return data.utilAnnotationVars[utilAnno] ?: UtilLattice.Bot
+            }
+            is ValueSource.Params -> {
+                val name = source.index.toString()
+                val utilAnno = UtilAnnotation.Var(name, node.owner.hashCode(), true)
+                return data.utilAnnotationVars[utilAnno] ?: UtilLattice.Bot
+            }
+        }
+    }
+
+    private fun getEffectFromUtilization(original: UtilLattice, final: UtilLattice): UtilEffect {
+        if (original == final) return UtilEffect.N
+
+        return when (final) {
+            UtilLattice.UT -> UtilEffect.U
+            UtilLattice.NU -> UtilEffect.I
+            else -> UtilEffect.X
+        }
     }
 
     /* Function Call */
 
     private fun handleFuncCall(node: FunctionCallNode, info: UtilAnalysisPathInfo) {
-        if (logging && node.fir.calleeReference.name.toString() in setOf("let1", "let2", "let3")) {
-            run {
-                val fnSymbol = node.fir.calleeReference.toResolvedFunctionSymbol() ?: return@run
-                val thisAnn = fnSymbol.resolvedReceiverTypeRef?.getAnnotationByClassId(Commons.Annotations.Util, context.session)
-
-                log("${node.fir.calleeReference.name} ${fnSymbol.parseUtilAnnotations(context.session)}")
-                log("param ${fnSymbol.valueParameterSymbols.first().resolvedReturnType.parseUtilAnnotations(context.session)}")
-
-            }
-        }
 
         val signature = resolveSignature(node) ?: return
 
-        if (signature.hasEffect()) {
-            val sigInstance = instantiateSignature(node, signature)
+        val sigInstance = instantiateSignature(node, signature, info)
 
-            if (sigInstance?.isParametric() == false) {
-                consumeReceiver(node, info, sigInstance)
-                consumeParameters(node, info, sigInstance)
-                consumeFreeVariables(node, info, sigInstance)
-            } else {
-                warnings.add(MismatchUtilEffectWarning(node.fir))
-            }
+        if (sigInstance == null || sigInstance.isParametric()) {
+            warnings.add(MismatchUtilEffectWarning(node.fir))
+            return
+        }
+
+        if (sigInstance.hasEffect()) {
+            consumeReceiver(node, info, sigInstance)
+            consumeParameters(node, info, sigInstance)
+            consumeFreeVariables(node, info, sigInstance)
         }
 
         if (isUtilizableType(node.fir.resolvedType)) {
             val source = ValueSource.CallSite(node.fir)
-            info.callSiteUtils[source] = UtilLattice.Top
+            info.callSiteUtils[source] =
+                (sigInstance.returnUtilAnnotation as? UtilAnnotation.Val)?.value ?: UtilLattice.Top
         }
     }
 
@@ -200,8 +256,8 @@ class UtilizationAnalysis(
 
         for (source in valueSources) {
             when(source) {
-                is ValueSource.NonLocalSource -> info.nonLocalUtils.meetVal(source, utilization)
-                is ValueSource.CallSite -> info.callSiteUtils.meetVal(source, utilization)
+                is ValueSource.NonLocalSource -> info.nonLocalUtils[source] = utilization
+                is ValueSource.CallSite -> info.callSiteUtils[source] = utilization
                 is ValueSource.TransientVar -> {}
             }
         }
@@ -253,19 +309,97 @@ class UtilizationAnalysis(
         return newSignature
     }
 
-    private fun instantiateSignature(node: FunctionCallNode, signature: Signature) : Signature? {
-        if (!signature.isParametric()) return signature
-
+    private fun instantiateSignature(node: FunctionCallNode, signature: Signature, info: UtilAnalysisPathInfo) : Signature? {
         val argSignatures = node.fir.arguments.map {
             if (!it.resolvedType.isSomeFunctionType(context.session)) null
             else getArgumentSignature(node, it)
         }
 
         try {
-            return signature.instantiateWith(argSignatures)
+            val (instSign, env) = signature.instantiateWith(argSignatures, getReceiverUtil(node, info), getParamsUtil(node, info))
+            recordLambdaUtilAnnotation(node, env, info)
+            return instSign
         } catch (e: SignatureInstanceException) {
+//            log("InstExc: ${e.message}")
             return null
         }
+    }
+
+    private fun recordLambdaUtilAnnotation(node: FunctionCallNode, env: InstantiationEnv, info: UtilAnalysisPathInfo) {
+        if(!node.owner.isLambda()) return
+        val lambdaFunction = node.owner.declaration as? FirAnonymousFunction ?: return
+        val ownerId = node.owner.hashCode()
+
+        for ((utilAnno, utilVal) in env.util.entries) {
+            if (!utilAnno.fromLambda || utilAnno.fromId != ownerId) continue
+
+            val index = utilAnno.name.toIntOrNull() ?: continue
+
+            val previousVal = data.utilAnnotationVars[utilAnno] ?: UtilLattice.Bot
+            val inferredVal = previousVal.join(utilVal.value)
+
+            data.utilAnnotationVars[utilAnno] = inferredVal
+
+            // NOTE: set the actual utilization of the parameter if the parameter utilization value
+            //       is still "bot", i.e. the first time it is inferred in the current program path
+            val source = ValueSource.Params(lambdaFunction.valueParameters[index].symbol, index)
+
+            if (info.nonLocalUtils[source] == UtilLattice.Bot) {
+                info.nonLocalUtils[source] = inferredVal
+            }
+        }
+    }
+
+    private fun getReceiverUtil(node: FunctionCallNode, info: UtilAnalysisPathInfo): UtilAnnotation? {
+        val receiver = node.fir.dispatchReceiver ?: node.fir.extensionReceiver ?: return null
+        if (!isUtilizableType(receiver.resolvedType)) return null
+
+        val resolvedReceiver = resolve(receiver, node, info, true)
+        val util = joinUtilizations(resolvedReceiver, info)
+
+        if (!node.owner.isLambda() || util != UtilLattice.Bot)
+            return UtilAnnotation.Val(util)
+
+        return UtilAnnotation.Var("this", node.owner.hashCode(), true)
+    }
+
+    private fun getParamsUtil(node: FunctionCallNode, info: UtilAnalysisPathInfo): List<UtilAnnotation?> {
+        val utilizations = mutableListOf<UtilAnnotation?>()
+
+        for ((i, arg) in node.fir.argumentList.arguments.withIndex()) {
+            if (!isUtilizableType(arg.resolvedType)) {
+                utilizations.add(null)
+                continue
+            }
+
+            val argSources = resolve(arg, node, info, true)
+            val util = joinUtilizations(argSources, info)
+
+
+            val anno =
+                if (!node.owner.isLambda() || util != UtilLattice.Bot) UtilAnnotation.Val(util)
+                else UtilAnnotation.Var(i.toString(), node.owner.hashCode(), true)
+
+            utilizations.add(anno)
+        }
+
+        return utilizations
+    }
+
+    private fun joinUtilizations(valueSources: SetLat<ValueSource>, info: UtilAnalysisPathInfo) : UtilLattice {
+        var util : UtilLattice = UtilLattice.Bot
+
+        for (source in valueSources) {
+            util = when(source) {
+                is ValueSource.NonLocalSource -> info.nonLocalUtils.getWithDefault(source).join(util)
+                is ValueSource.CallSite -> info.callSiteUtils.getWithDefault(source).join(util)
+                is ValueSource.TransientVar -> util
+            }
+
+            if (util == UtilLattice.Top) return util
+        }
+
+        return util
     }
 
     private fun getArgumentSignature(node: CFGNode<*>, argument: FirExpression): Signature? {
@@ -437,8 +571,11 @@ class UtilizationAnalysis(
     // Path Info
 
     private fun propagatePathInfo(node: CFGNode<*>) : UtilAnalysisPathInfo {
-        if (node is FunctionEnterNode)
-            return UtilAnalysisPathInfo()
+        if (node is FunctionEnterNode) {
+            val info = UtilAnalysisPathInfo()
+            data.pathInfos[node] = info
+            return info
+        }
 
         val pathInfos = node.previousNodes.asSequence()
             .filterNot { it.isInvalidPrev(node) || it is FunctionExitNode }
@@ -446,9 +583,7 @@ class UtilizationAnalysis(
             .toList()
 
         val info = pathInfos.mergeAll(true) ?: UtilAnalysisPathInfo()
-
         data.pathInfos[node] = info
-
         return info
     }
 
@@ -461,6 +596,7 @@ private class UtilAnalysisData {
     val pathInfos: MutableMap<CFGNode<*>, UtilAnalysisPathInfo> = mutableMapOf()
     val lambdaSignatures: MutableMap<FirAnonymousFunction, Signature> = mutableMapOf()
     val cachedSignature: MutableMap<FirFunctionSymbol<*>, Signature> = mutableMapOf()
+    val utilAnnotationVars: MutableMap<UtilAnnotation.Var, UtilLattice> = mutableMapOf()
 }
 
 private class UtilAnalysisPathInfo private constructor(
@@ -530,6 +666,8 @@ private fun buildSignature(session: FirSession, funcSymbol: FirFunctionSymbol<*>
 
     if (effects == null) return null
 
+    val utilAnnotation = funcSymbol.parseUtilAnnotations(funcSymbol.hashCode(), session)
+
     return Signature(
         isClassMemberOrExtension = funcSymbol.isClassMemberOrExtension(),
         paramSignature = buildParamSignature(session, funcSymbol),
@@ -538,9 +676,9 @@ private fun buildSignature(session: FirSession, funcSymbol: FirFunctionSymbol<*>
         receiverEffect = effects.receiverEffect,
         fvEffect = effects.fvEffect,
 
-        contextUtilAnnotation = null, //TODO: fix
-        paramUtilAnnotations = mapOf(),
-        returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
+        contextUtilAnnotation = utilAnnotation.context,
+        paramUtilAnnotations = utilAnnotation.params,
+        returnUtilAnnotation = utilAnnotation.retVal,
     )
 }
 
@@ -553,6 +691,7 @@ private fun buildParamSignature(session:FirSession, fnSymbol: FirFunctionSymbol<
 
         val anno = param.getAnnotationByClassId(Commons.Annotations.UEffect, session) ?: continue
         val effects = parseUEffectAnnotation(anno) ?: continue
+        val utilAnnotation = paramType.parseUtilAnnotations(fnSymbol.hashCode(), session) ?: continue
 
         val signature = Signature(
             isClassMemberOrExtension = paramType.isExtensionFunctionType,
@@ -562,9 +701,9 @@ private fun buildParamSignature(session:FirSession, fnSymbol: FirFunctionSymbol<
             receiverEffect = effects.receiverEffect,
             fvEffect = effects.fvEffect,
 
-            contextUtilAnnotation = null, //TODO: fix
-            paramUtilAnnotations = mapOf(),
-            returnUtilAnnotation = UtilAnnotation.Val(UtilLattice.Top),
+            contextUtilAnnotation = utilAnnotation.context,
+            paramUtilAnnotations = utilAnnotation.params,
+            returnUtilAnnotation = utilAnnotation.retVal,
         )
 
         paramSignature[i] = signature
@@ -643,13 +782,13 @@ data class ParsedUtilAnnotations(
     val retVal: UtilAnnotation
 )
 
-private fun FirFunctionSymbol<*>.parseUtilAnnotations(session: FirSession) : ParsedUtilAnnotations {
-    val ctx = resolvedReceiverTypeRef?.annotations?.getUtilAnnotation(session)
+private fun FirFunctionSymbol<*>.parseUtilAnnotations(fromId: Int, session: FirSession) : ParsedUtilAnnotations {
+    val ctx = getUtilAnnotation(fromId, session) ?: resolvedReceiverTypeRef?.annotations?.getUtilAnnotation(fromId, session)
 
     val params = mutableMapOf<Int, UtilAnnotation>()
 
     for ((i, valParam) in valueParameterSymbols.withIndex()) {
-        val utilAnn = valParam.resolvedReturnTypeRef.annotations.getUtilAnnotation(session)
+        val utilAnn = valParam.resolvedReturnTypeRef.annotations.getUtilAnnotation(fromId, session)
 
         if (utilAnn is UtilAnnotation.Val && utilAnn.value == UtilLattice.Top) {
             continue
@@ -658,12 +797,12 @@ private fun FirFunctionSymbol<*>.parseUtilAnnotations(session: FirSession) : Par
         params[i] = utilAnn
     }
 
-    val retVal = resolvedReturnTypeRef.annotations.getUtilAnnotation(session)
+    val retVal = resolvedReturnTypeRef.annotations.getUtilAnnotation(fromId, session)
 
     return ParsedUtilAnnotations(ctx, params, retVal)
 }
 
-private fun ConeKotlinType.parseUtilAnnotations(session: FirSession) : ParsedUtilAnnotations? {
+private fun ConeKotlinType.parseUtilAnnotations(fromId: Int, session: FirSession) : ParsedUtilAnnotations? {
     if (!isSomeFunctionType(session)) return null
 
     val paramSize: Int
@@ -673,7 +812,7 @@ private fun ConeKotlinType.parseUtilAnnotations(session: FirSession) : ParsedUti
     if (isExtensionFunctionType) {
         paramSize = typeArguments.size - 2
         paramOffset = 1
-        ctx = typeArguments.first().type?.getUtilAnnotation(session)
+        ctx = typeArguments.first().type?.getUtilAnnotation(fromId, session)
     } else {
         paramSize = typeArguments.size - 1
         paramOffset = 0
@@ -683,7 +822,7 @@ private fun ConeKotlinType.parseUtilAnnotations(session: FirSession) : ParsedUti
     val params = mutableMapOf<Int, UtilAnnotation>()
 
     for (i in 0..<paramSize) {
-        val util = typeArguments.getOrNull(i + paramOffset)?.type?.getUtilAnnotation(session)
+        val util = typeArguments.getOrNull(i + paramOffset)?.type?.getUtilAnnotation(fromId, session)
 
         if (util == null || (util is UtilAnnotation.Val && util.value == UtilLattice.Top)) {
             continue
@@ -692,7 +831,7 @@ private fun ConeKotlinType.parseUtilAnnotations(session: FirSession) : ParsedUti
         params[i] = util
     }
 
-    val retVal = typeArguments.last().type?.getUtilAnnotation(session) ?: UtilAnnotation.Val(UtilLattice.Top)
+    val retVal = typeArguments.last().type?.getUtilAnnotation(fromId, session) ?: UtilAnnotation.Val(UtilLattice.Top)
 
     return ParsedUtilAnnotations(ctx, params, retVal)
 }
@@ -701,11 +840,21 @@ private fun isUtilizableType(session: FirSession, type: ConeKotlinType) : Boolea
     return type.hasMustConsumeAnnotation(session)
 }
 
-private fun ConeKotlinType.getUtilAnnotation(session: FirSession): UtilAnnotation {
-    return this.customAnnotations.getUtilAnnotation(session)
+private fun FirFunctionSymbol<*>.getUtilAnnotation(fromId: Int, session: FirSession): UtilAnnotation? {
+    if (!isClassMemberOrExtension()) return null
+
+    return this.annotations.getUtilAnnotationOrNull(fromId, session)
 }
 
-private fun List<FirAnnotation>.getUtilAnnotation(session: FirSession) : UtilAnnotation {
+private fun ConeKotlinType.getUtilAnnotation(fromId: Int, session: FirSession): UtilAnnotation {
+    return this.customAnnotations.getUtilAnnotation(fromId, session)
+}
+
+private fun List<FirAnnotation>.getUtilAnnotation(fromId: Int, session: FirSession) : UtilAnnotation {
+    return getUtilAnnotationOrNull(fromId, session) ?: UtilAnnotation.Val(UtilLattice.Top)
+}
+
+private fun List<FirAnnotation>.getUtilAnnotationOrNull(fromId: Int, session: FirSession) : UtilAnnotation? {
     var firstArg : String? = null
     for (annotation in this){
         if (annotation.toAnnotationClassId(session) != Commons.Annotations.Util) continue
@@ -714,13 +863,13 @@ private fun List<FirAnnotation>.getUtilAnnotation(session: FirSession) : UtilAnn
         break
     }
 
-    when(firstArg) {
-        null -> return UtilAnnotation.Val(UtilLattice.Top)
-        "" -> return UtilAnnotation.Val(UtilLattice.Top)
-        "0" -> return UtilAnnotation.Val(UtilLattice.NU)
-        "1" -> return UtilAnnotation.Val(UtilLattice.UT)
-        "0|1" -> return UtilAnnotation.Val(UtilLattice.Top)
-        else -> return UtilAnnotation.Var(firstArg)
+    return when(firstArg) {
+        null ->  null
+        "" -> UtilAnnotation.Val(UtilLattice.Top)
+        "0" -> UtilAnnotation.Val(UtilLattice.NU)
+        "1" -> UtilAnnotation.Val(UtilLattice.UT)
+        "0|1" -> UtilAnnotation.Val(UtilLattice.Top)
+        else -> UtilAnnotation.Var(firstArg, fromId)
     }
 }
 

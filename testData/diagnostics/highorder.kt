@@ -45,14 +45,14 @@ fun<A, B> (@Util("u") A).let1(
 
 @UEffect([UE(THIS, "a"), UE(FV, "f")])
 fun<A, B> (@Util("u") A).let2(
-    @UEffect([UE(THIS, "a"), UE(FV, "f")]) f: @Util("u") (@Util("u") A).() -> @Util("1") B
+    @UEffect([UE(THIS, "a"), UE(FV, "f")]) f: (@Util("u") A).() -> B
 ): B {
     return f(this)
 }
 
 @UEffect([UE(THIS, "a"), UE(FV, "f")])
 fun<A, B> (@Util("u") A).let3(
-    @UEffect([UE(THIS, "a"), UE(FV, "f")]) f: (@Util("u") A).(@Util("1") A) -> @Util("0") B
+    @UEffect([UE(THIS, "a"), UE(FV, "f")]) f: (@Util("u") A).(A) -> B
 ): B {
     return f(this)
 }
@@ -119,4 +119,70 @@ fun effectMismatch() {
     val task3 = <!UNCONSUMED_VALUE!>DummyDeferred { 1 }<!>
 
     <!MISMATCH_UTIL_EFFECT!>task3.letUtilize(::doNothing)<!>
+}
+
+@UEffect([UE(0, "U")])
+fun <T> identity(x: @Util("u") T) : @Util("u") T = x
+
+fun <T> requireUtilized(d : @Util("1") DummyDeferred<T>) {
+    // do nothing
+}
+
+fun testUtilPrereq() {
+    val task1 = DummyDeferred { 1 }
+    val task2 = DummyDeferred { 1 }
+
+    var res = task1.await()
+
+    requireUtilized(task1)
+
+    val task2a = identity(task2)
+
+    <!MISMATCH_UTIL_EFFECT!>requireUtilized(task2a)<!>
+
+    res = task2a.await()
+}
+
+@MustConsume
+class DummyFile private constructor () {
+    companion object {
+        fun open(path: String) : @Util("0") DummyFile = DummyFile()
+    }
+
+    @Util("0")
+    fun write(text: String) {}
+
+    @Consume
+    fun close() {}
+}
+
+fun writeEmpty(file: @Util("0") DummyFile) {
+    file.write("")
+}
+
+fun testDummyFile() {
+    val file1 = DummyFile.open("test")
+    val file2 = <!UNCONSUMED_VALUE!>DummyFile.open("test2")<!>
+    val writer = { it : DummyFile -> writeEmpty(it) }
+
+    file1.write("1")
+    file2.write("2")
+
+    file1.let1(::writeEmpty)
+    file1.let1({ if (1 == 2) it.write("test") else writer(it) })
+    file1.let1 { writeEmpty(it) }
+    file1.let1(writer)
+
+    file1.close()
+
+    <!MISMATCH_UTIL_EFFECT!>file1.write("3")<!>
+    <!MISMATCH_UTIL_EFFECT!>file1.let1(::writeEmpty)<!>
+    <!MISMATCH_UTIL_EFFECT!>file1.let1 { writeEmpty(it) }<!>
+    <!MISMATCH_UTIL_EFFECT!>file1.let1(writer)<!>
+    <!MISMATCH_UTIL_EFFECT!>file1.let1({ if (1 == 2) it.write("test") else writer(it) })<!>
+
+    file2.let1(::writeEmpty)
+    file2.let1(writer)
+    file2.let1 { writeEmpty(it) }
+    file2.let1({ if (1 == 2) it.write("test") else writer(it) })
 }
