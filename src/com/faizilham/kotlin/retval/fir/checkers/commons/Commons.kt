@@ -13,8 +13,8 @@ object Commons {
         /* Annotation class ids */
         val PACKAGE_FQN = FqName("com.faizilham.kotlin.retval.annotations")
         val Discardable = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
-        val MustConsume = ClassId(PACKAGE_FQN, Name.identifier("MustConsume"))
-        val Consume = ClassId(PACKAGE_FQN, Name.identifier("Consume"))
+        val MustConsume = ClassId(PACKAGE_FQN, Name.identifier("MustUtilize"))
+        val Consume = ClassId(PACKAGE_FQN, Name.identifier("Utilize"))
         val SameUse = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
 
         val UEffect = ClassId(PACKAGE_FQN, Name.identifier("UEffect"))

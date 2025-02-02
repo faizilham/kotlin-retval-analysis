@@ -2,12 +2,12 @@ package foo.bar
 
 import com.faizilham.kotlin.retval.annotations.*
 
-@MustConsume
+@MustUtilize
 class DummyDeferred<T>(val block : () -> T) {
     private var result : T? = null
     private var finished = false
 
-    @Consume
+    @Utilize
     fun await() : T? {
         if (!finished) {
             result = block()
@@ -17,7 +17,7 @@ class DummyDeferred<T>(val block : () -> T) {
         return result
     }
 
-    @Consume
+    @Utilize
     fun cancel() {
         finished = true
     }
@@ -27,16 +27,16 @@ class DummyDeferred<T>(val block : () -> T) {
     }
 }
 
-<!CONSUME_NOT_MEMBER_OR_EXT!>@Consume fun invalidConsume(x: Int) {}<!>
+<!CONSUME_NOT_MEMBER_OR_EXT!>@Utilize fun invalidConsume(x: Int) {}<!>
 
-@Consume fun DummyDeferred<*>.stop() { cancel() }
+@Utilize fun DummyDeferred<*>.stop() { cancel() }
 
-fun stopWithParam(@Consume task: DummyDeferred<*>) {
+fun stopWithParam(@Utilize task: DummyDeferred<*>) {
     task.cancel()
 }
 
 // TODO: allow this? maybe weird because no "return is consumed" tracking?
-fun identityConsume(@Consume task: DummyDeferred<*>) = task
+fun identityConsume(@Utilize task: DummyDeferred<*>) = task
 
 fun simple() {
     val block = { 1 }

@@ -2,12 +2,12 @@ package foo.bar
 
 import com.faizilham.kotlin.retval.annotations.*
 
-@MustConsume
+@MustUtilize
 class DummyDeferred<T>(val block : () -> T) {
     private var result : T? = null
     private var finished = false
 
-    @Consume
+    @Utilize
     fun await() : T? {
         if (!finished) {
             result = block()
@@ -17,7 +17,7 @@ class DummyDeferred<T>(val block : () -> T) {
         return result
     }
 
-    @Consume
+    @Utilize
     fun cancel() {
         finished = true
     }
@@ -27,7 +27,7 @@ class DummyDeferred<T>(val block : () -> T) {
     }
 }
 
-fun<T> myawait(@Consume x: DummyDeferred<T>): T? {
+fun<T> myawait(@Utilize x: DummyDeferred<T>): T? {
     return x.await()
 }
 
@@ -143,21 +143,34 @@ fun testUtilPrereq() {
     res = task2a.await()
 }
 
-@MustConsume
+@MustUtilize
 class DummyFile private constructor () {
     companion object {
         fun open(path: String) : @Util("0") DummyFile = DummyFile()
     }
 
     @Util("0")
+    fun read() : String = ""
+
+    @Util("0")
     fun write(text: String) {}
 
-    @Consume
+
+    @Utilize @Util("0")
     fun close() {}
 }
 
 fun writeEmpty(file: @Util("0") DummyFile) {
     file.write("")
+}
+
+fun writeAndClose(@Utilize f: @Util("0") DummyFile) {
+    f.write("test")
+    f.close()
+}
+
+fun writeErr(file: DummyFile) {
+    <!MISMATCH_UTIL_EFFECT!>file.write("")<!> // since file utilization is not annotated = Top
 }
 
 fun testDummyFile() {
@@ -180,6 +193,8 @@ fun testDummyFile() {
     <!MISMATCH_UTIL_EFFECT!>file1.let1 { writeEmpty(it) }<!>
     <!MISMATCH_UTIL_EFFECT!>file1.let1(writer)<!>
     <!MISMATCH_UTIL_EFFECT!>file1.let1({ if (1 == 2) it.write("test") else writer(it) })<!>
+
+    <!MISMATCH_UTIL_EFFECT!>file1.close()<!>
 
     file2.let1(::writeEmpty)
     file2.let1(writer)

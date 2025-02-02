@@ -1,7 +1,7 @@
 package com.faizilham.kotlin.retval.fir.checkers.analysis
 
-import com.faizilham.kotlin.retval.fir.checkers.analysis.FVEffectSign.FVEMap
-import com.faizilham.kotlin.retval.fir.checkers.analysis.FVEffectSign.FVEVar
+import com.faizilham.kotlin.retval.fir.checkers.analysis.FVEffect.FVEMap
+import com.faizilham.kotlin.retval.fir.checkers.analysis.FVEffect.FVEVar
 import com.faizilham.kotlin.retval.fir.checkers.analysis.UtilEffect.Var
 import com.faizilham.kotlin.retval.fir.checkers.commons.Commons
 import com.faizilham.kotlin.retval.fir.checkers.commons.containsAnnotation
@@ -16,7 +16,7 @@ class Signature(
 
     val paramEffect : Map<Int, UtilEffect>,
     val receiverEffect: UtilEffect,
-    val fvEffect: FVEffectSign,
+    val fvEffect: FVEffect,
 
     val contextUtilAnnotation: UtilAnnotation?,
     val paramUtilAnnotations: Map<Int, UtilAnnotation>,
@@ -219,12 +219,12 @@ sealed interface UtilEffect {
 }
 
 /* FV Effect Signature */
-sealed interface FVEffectSign {
+sealed interface FVEffect {
     // FVEMap should only be constructable from inference
-    data class FVEMap(val map: Map<FirBasedSymbol<*>, UtilEffect> = mapOf()): FVEffectSign
+    data class FVEMap(val map: Map<FirBasedSymbol<*>, UtilEffect> = mapOf()): FVEffect
 
     // Parametric FV Effect in annotated source codes
-    data class FVEVar(val name: String): FVEffectSign {
+    data class FVEVar(val name: String): FVEffect {
         override fun toString(): String {
             return "\$$name"
         }
@@ -277,7 +277,7 @@ fun unify(env: InstantiationEnv, target: Signature, concrete: Signature) {
     unify(env, target.returnUtilAnnotation, concrete.returnUtilAnnotation)
 }
 
-fun unify(env: InstantiationEnv, target: FVEffectSign, concrete: FVEffectSign) {
+fun unify(env: InstantiationEnv, target: FVEffect, concrete: FVEffect) {
     if (concrete !is FVEMap) return
 
     when (target) {
@@ -333,7 +333,7 @@ fun Signature.instantiateBy(env: InstantiationEnv) : Signature {
     )
 }
 
-fun FVEffectSign.instantiateBy(env: InstantiationEnv) : FVEffectSign {
+fun FVEffect.instantiateBy(env: InstantiationEnv) : FVEffect {
     if (this is FVEMap) return this.instantiateBy(env)
 
     return env.fv[this]?.instantiateBy(env) ?: FVEMap()
@@ -412,4 +412,12 @@ fun FirFunctionSymbol<*>.getParameterEffects() : Map<Int, UtilEffect> {
             }
         }
         .associate { it }
+}
+
+@Target(AnnotationTarget.TYPE_PARAMETER)
+annotation class UtilizeLike
+
+
+class MyList<@UtilizeLike T> constructor() {
+
 }

@@ -159,7 +159,7 @@ class UtilizationAnalysis(
             paramSignature = mapOf(),
             paramEffect,
             receiverEffect,
-            fvEffect = FVEffectSign.FVEMap(fvEffect),
+            fvEffect = FVEffect.FVEMap(fvEffect),
 
             contextUtilAnnotation = contextUtilAnnotation,
             paramUtilAnnotations = paramUtilAnnotations,
@@ -237,7 +237,7 @@ class UtilizationAnalysis(
     }
 
     private fun consumeFreeVariables(node: FunctionCallNode, info: UtilAnalysisPathInfo, signature: Signature) {
-        val fvEffect = signature.fvEffect as? FVEffectSign.FVEMap ?: return
+        val fvEffect = signature.fvEffect as? FVEffect.FVEMap ?: return
 
         for ((freeVar, effect) in fvEffect.map) {
             val sources = resolveVar(freeVar, node, info, true)
@@ -341,7 +341,7 @@ class UtilizationAnalysis(
             data.utilAnnotationVars[utilAnno] = inferredVal
 
             // NOTE: set the actual utilization of the parameter if the parameter utilization value
-            //       is still "bot", i.e. the first time it is inferred in the current program path
+            //       is still bottom, i.e. the first time it is inferred in the current program path
             val source = ValueSource.Params(lambdaFunction.valueParameters[index].symbol, index)
 
             if (info.nonLocalUtils[source] == UtilLattice.Bot) {
@@ -654,7 +654,7 @@ private sealed interface ValueSource {
 data class ParsedEffect(
     val receiverEffect: UtilEffect,
     val paramEffect: Map<Int, UtilEffect>,
-    val fvEffect: FVEffectSign
+    val fvEffect: FVEffect
 )
 
 private fun buildSignature(session: FirSession, funcSymbol: FirFunctionSymbol<*>) : Signature? {
@@ -716,7 +716,7 @@ private fun parseConsumeAnnotation(session: FirSession, funcSymbol: FirFunctionS
     return ParsedEffect(
         paramEffect = funcSymbol.getParameterEffects(),
         receiverEffect = if (funcSymbol.hasConsumeAnnotation(session)) UtilEffect.U else UtilEffect.N ,
-        fvEffect = FVEffectSign.FVEMap(),
+        fvEffect = FVEffect.FVEMap(),
     )
 }
 
@@ -725,7 +725,7 @@ private fun parseUEffectAnnotation(anno: FirAnnotation) : ParsedEffect? {
 
     var receiverEffect : UtilEffect = UtilEffect.N
     val paramEffect = mutableMapOf<Int, UtilEffect>()
-    var fvEffect: FVEffectSign = FVEffectSign.FVEMap()
+    var fvEffect: FVEffect = FVEffect.FVEMap()
 
     for (ueCall in effects.argumentList.arguments) {
         val (target, effect) = parseUECall(ueCall) ?: continue
@@ -735,7 +735,7 @@ private fun parseUEffectAnnotation(anno: FirAnnotation) : ParsedEffect? {
         } else if (target == -1) {
             receiverEffect = effect
         } else if (target == -2 && effect is UtilEffect.Var) {
-            fvEffect = FVEffectSign.FVEVar(effect.name)
+            fvEffect = FVEffect.FVEVar(effect.name)
         }
 
         // TODO: error for others?
