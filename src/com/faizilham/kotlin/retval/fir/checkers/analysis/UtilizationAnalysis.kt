@@ -565,7 +565,7 @@ class UtilizationAnalysis(
     private val emptyCallsites = SetLat<ValueSource.CallSite>()
 
     private fun isUtilizableType(type: ConeKotlinType) : Boolean {
-        return type.hasMustConsumeAnnotation(context.session)
+        return type.hasMustConsumeAnnotation(context.session) || type.isUtilizableInstance(context.session)
     }
 
     // Path Info
@@ -834,10 +834,6 @@ private fun ConeKotlinType.parseUtilAnnotations(fromId: Int, session: FirSession
     val retVal = typeArguments.last().type?.getUtilAnnotation(fromId, session) ?: UtilAnnotation.Val(UtilLattice.Top)
 
     return ParsedUtilAnnotations(ctx, params, retVal)
-}
-
-private fun isUtilizableType(session: FirSession, type: ConeKotlinType) : Boolean {
-    return type.hasMustConsumeAnnotation(session)
 }
 
 private fun FirFunctionSymbol<*>.getUtilAnnotation(fromId: Int, session: FirSession): UtilAnnotation? {

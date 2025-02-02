@@ -143,6 +143,59 @@ fun testUtilPrereq() {
     res = task2a.await()
 }
 
+/** Collection **/
+
+class MyList<@UtilizeLike T> constructor() {
+    private val _internalList : MutableList<T>
+
+    init {
+        _internalList = mutableListOf()
+    }
+
+
+    @Util("w")
+    @Discardable
+    fun add(@Utilize item: @Util("w") T): Boolean {
+        return _internalList.add(item)
+    }
+
+    @Util("u1")
+    @UEffect([UE(THIS, "a"), UE(FV, "f")])
+    fun<U> map(@UEffect([UE(0, "a"), UE(FV, "f")]) f: (@Util("u1") T) -> (@Util("u2") U)) : @Util("u2") MyList<U> {
+        val mapped = MyList<U>()
+
+        for (item in _internalList) {
+            mapped.add(f(item))
+        }
+
+        return mapped
+    }
+}
+
+fun listUtil() {
+    val intList = MyList<Int>()
+    intList.add(1)
+
+    val tasksErr = <!UNCONSUMED_VALUE!>MyList<DummyDeferred<Int>>()<!>
+
+    val task1 = DummyDeferred { 1 }
+    tasksErr.add(task1)
+
+    val tasks = MyList<DummyDeferred<Int>>()
+
+    val task2 = DummyDeferred { 2 }
+    val task3 = DummyDeferred { 3 }
+
+    tasks.add(task2)
+    tasks.add(task3)
+
+    val results = tasks.map { it.await() }
+
+    <!MISMATCH_UTIL_EFFECT!>tasks.add(<!UNCONSUMED_VALUE!>DummyDeferred { 4 }<!>)<!>
+}
+
+/** File **/
+
 @MustUtilize
 class DummyFile private constructor () {
     companion object {

@@ -14,6 +14,9 @@ annotation class MustUtilize
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.VALUE_PARAMETER)
 annotation class Utilize
 
+@Target(AnnotationTarget.TYPE_PARAMETER)
+annotation class UtilizeLike
+
 // effect: U | N | I | X, empty -> N, other strings will be used as variable name
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.VALUE_PARAMETER, AnnotationTarget.TYPE)
 annotation class Eff(val effect: String)

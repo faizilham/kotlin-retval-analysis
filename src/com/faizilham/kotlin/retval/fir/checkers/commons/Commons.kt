@@ -15,6 +15,7 @@ object Commons {
         val Discardable = ClassId(PACKAGE_FQN, Name.identifier("Discardable"))
         val MustConsume = ClassId(PACKAGE_FQN, Name.identifier("MustUtilize"))
         val Consume = ClassId(PACKAGE_FQN, Name.identifier("Utilize"))
+        val UtilizeLike = ClassId(PACKAGE_FQN, Name.identifier("UtilizeLike"))
         val SameUse = ClassId(PACKAGE_FQN, Name.identifier("SameUse"))
 
         val UEffect = ClassId(PACKAGE_FQN, Name.identifier("UEffect"))

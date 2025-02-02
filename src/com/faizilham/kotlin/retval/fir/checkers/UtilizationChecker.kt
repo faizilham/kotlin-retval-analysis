@@ -15,8 +15,8 @@ object UtilizationChecker :  FirControlFlowChecker(MppCheckerKind.Common) {
             return
         }
 
-        val logging = context.containingFile?.name == "highorder.kt" && graph.name == "testDummyFile"
-//        val logging = false
+//        val logging = context.containingFile?.name == "highorder.kt" && graph.name == "listUtil"
+        val logging = false
 
         val funcAnalyzer = FuncAliasAnalysis(context, logging)
         funcAnalyzer.analyzeGraph(graph)

@@ -414,10 +414,4 @@ fun FirFunctionSymbol<*>.getParameterEffects() : Map<Int, UtilEffect> {
         .associate { it }
 }
 
-@Target(AnnotationTarget.TYPE_PARAMETER)
-annotation class UtilizeLike
 
-
-class MyList<@UtilizeLike T> constructor() {
-
-}

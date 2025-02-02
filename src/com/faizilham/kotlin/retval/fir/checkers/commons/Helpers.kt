@@ -133,9 +133,31 @@ fun ConeKotlinType.hasDiscardableAnnotation(session: FirSession) =
 fun ConeKotlinType.hasMustConsumeAnnotation(session: FirSession) =
     hasClassAnnotation(session, Commons.Annotations.MustConsume)
 
-fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : Boolean{
+fun ConeKotlinType.isUtilizableInstance(session: FirSession) : Boolean {
+    if (typeArguments.isEmpty()) return false
+
+    val utilLikesIdx = getUtilizeLikeIndexes(session) ?: return false
+
+    for (i in utilLikesIdx) {
+        if (typeArguments[i].type?.hasMustConsumeAnnotation(session) == true) {
+            return true
+        }
+    }
+
+    return false
+}
+
+fun ConeKotlinType.hasClassAnnotation(session: FirSession, classId: ClassId) : Boolean {
     val regularClassSymbol = toRegularClassSymbol(session) ?: return false
     return regularClassSymbol.hasAnnotation(classId, session)
+}
+
+fun ConeKotlinType.getUtilizeLikeIndexes(session: FirSession): List<Int>? {
+    val regularClassSymbol = toRegularClassSymbol(session) ?: return null
+    return regularClassSymbol.typeParameterSymbols.asSequence()
+        .filter { it.hasAnnotation(Commons.Annotations.UtilizeLike, session) }
+        .mapIndexed { i, _ -> i }
+        .toList()
 }
 
 fun isBuiltInDiscardable(classId: ClassId?) : Boolean {
